@@ -1,0 +1,35 @@
+{
+  "name": "pi-sandbox-guard",
+  "version": "0.0.0",
+  "description": "Pi extension that enforces a unified sandbox policy with Anthropic sandbox-runtime",
+  "keywords": [
+    "pi-package",
+    "sandbox"
+  ],
+  "type": "module",
+  "main": "src/extension.ts",
+  "pi": {
+    "extensions": [
+      "./src/extension.ts"
+    ]
+  },
+  "scripts": {
+    "build": "echo 'nothing to build'",
+    "check": "tsc --noEmit",
+    "test": "vitest --run tests/unit tests/contract",
+    "test:integration:sandbox": "vitest --run tests/integration/sandbox-runtime"
+  },
+  "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "^0.0.54",
+    "@earendil-works/pi-coding-agent": "^0.78.1",
+    "typebox": "^1.1.38"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
