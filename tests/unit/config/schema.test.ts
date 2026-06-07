@@ -31,6 +31,42 @@ describe("guard config schema", () => {
     ).toThrow(/reviewer.enabled/);
   });
 
+  it("rejects unsupported tools and bypass modes", () => {
+    expect(() =>
+      parseGuardConfig(
+        {
+          ...validConfig,
+          enforcement: { tools: ["bash", "curl"], bypass: { mode: "deny" } },
+        },
+        "config.json",
+      ),
+    ).toThrow(/unsupported tool/);
+    expect(() =>
+      parseGuardConfig(
+        {
+          ...validConfig,
+          enforcement: { tools: ["bash"], bypass: { mode: "allow" } },
+        },
+        "config.json",
+      ),
+    ).toThrow(/must be "review" or "deny"/);
+  });
+
+  it("requires explicit filesystem arrays", () => {
+    expect(() =>
+      parseGuardConfig(
+        {
+          ...validConfig,
+          sandbox: {
+            ...validConfig.sandbox,
+            filesystem: { denyRead: [], denyWrite: [] },
+          },
+        },
+        "config.json",
+      ),
+    ).toThrow(/allowWrite/);
+  });
+
   it("accepts a fully explicit config", () => {
     expect(parseGuardConfig(validConfig, "config.json")).toMatchObject({
       enabled: true,

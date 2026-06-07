@@ -17,7 +17,8 @@
     "build": "echo 'nothing to build'",
     "check": "tsc --noEmit",
     "test": "vitest --run tests/unit tests/contract",
-    "test:integration:sandbox": "vitest --run tests/integration/sandbox-runtime"
+    "test:sandbox": "vitest --run tests/sandbox",
+    "test:integration": "vitest --run tests/integration"
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "^0.0.54",

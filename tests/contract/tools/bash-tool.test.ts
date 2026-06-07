@@ -10,6 +10,50 @@ import { SandboxSession } from "../../../src/runtime/sandbox-session";
 import { createBashTool } from "../../../src/tools/adapters/bash";
 
 describe("bash tool contract", () => {
+  it("runs normal commands through sandboxed execution without reviewer", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-bash-tool-"));
+    const config = compileEffectiveConfig(
+      {
+        enabled: true,
+        sandbox: {
+          network: { allowedDomains: [], deniedDomains: [] },
+          filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] },
+        },
+        enforcement: {
+          tools: ["bash"],
+          bypass: { mode: "review" },
+        },
+        reviewer: { enabled: true, timeoutMs: 1_000, maxTranscriptChars: 1_000 },
+      },
+      path.join(root, ".pi", "sandbox-guard.json"),
+      root,
+    );
+    const sandbox = new SandboxSession(fakeSandboxManager());
+    await sandbox.initialize(config.sandboxRuntime);
+    const services: Services = {
+      config,
+      sandbox,
+      reviewer: new ReviewService({
+        async review() {
+          throw new Error("reviewer should not run");
+        },
+      }),
+      audit: () => {},
+    };
+    const tool = createBashTool(() => services);
+
+    const result = await tool.execute(
+      "call-1",
+      { command: "printf sandboxed" },
+      undefined,
+      undefined,
+      fakeExtensionContext(root),
+    );
+
+    const text = result.content.find((item) => item.type === "text")?.text ?? "";
+    expect(text).toContain("sandboxed");
+  });
+
   it("routes explicit bypass through reviewer and fails closed", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "psg-bash-tool-"));
     const config = compileEffectiveConfig(
@@ -55,7 +99,7 @@ describe("bash tool contract", () => {
 function fakeSandboxManager(): any {
   return {
     initialize: async () => {},
-    wrapWithSandboxArgv: async () => ({ argv: ["true"], env: {} }),
+    wrapWithSandboxArgv: async (command: string) => ({ argv: [process.env.SHELL ?? "sh", "-lc", command], env: {} }),
     annotateStderrWithSandboxFailures: (_command: string, stderr: string) => stderr,
     cleanupAfterCommand: () => {},
     reset: async () => {},

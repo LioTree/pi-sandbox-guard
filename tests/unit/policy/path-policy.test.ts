@@ -96,4 +96,54 @@ describe("path policy", () => {
       allowed: false,
     });
   });
+
+  it("decides symlink reads by the resolved real path", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-policy-"));
+    const deniedDir = path.join(root, "denied");
+    const allowedDir = path.join(root, "allowed");
+    await mkdir(deniedDir);
+    await mkdir(allowedDir);
+    const allowedFile = path.join(allowedDir, "ok.txt");
+    await writeFile(allowedFile, "ok", "utf-8");
+    const link = path.join(deniedDir, "ok-link.txt");
+    await symlink(allowedFile, link);
+
+    const policy = compilePathPolicy(
+      {
+        denyRead: [deniedDir],
+        allowWrite: [root],
+        denyWrite: [],
+      },
+      root,
+    );
+
+    await expect(checkPathAccess(policy, link, "read")).resolves.toMatchObject({
+      allowed: true,
+      resolvedPath: allowedFile,
+    });
+  });
+
+  it("resolves missing write targets through the nearest existing parent", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-policy-"));
+    const publicDir = path.join(root, "public");
+    const secretDir = path.join(root, "secret");
+    await mkdir(publicDir);
+    await mkdir(secretDir);
+    const link = path.join(publicDir, "secret-link");
+    await symlink(secretDir, link);
+
+    const policy = compilePathPolicy(
+      {
+        denyRead: [],
+        allowWrite: [publicDir],
+        denyWrite: [secretDir],
+      },
+      root,
+    );
+
+    await expect(checkPathAccess(policy, path.join(link, "new.txt"), "write")).resolves.toMatchObject({
+      allowed: false,
+      resolvedPath: path.join(secretDir, "new.txt"),
+    });
+  });
 });
