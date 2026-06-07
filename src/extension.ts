@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createConsoleAuditSink } from "./audit";
+import { createFileAuditSink } from "./audit";
 import { loadEffectiveConfig } from "./config/load";
 import { ConfigError, SandboxExecError, type SandboxGuardError, errorMessage } from "./errors";
 import { ReviewService } from "./review/service";
@@ -8,16 +8,16 @@ import { type PluginState, requireReady } from "./runtime-state";
 import { createSandboxGuardTools } from "./tools/adapters/registry";
 
 export default function sandboxGuardExtension(pi: ExtensionAPI): void {
-  const audit = createConsoleAuditSink();
+  const fileAuditSink = createFileAuditSink("~/.pi/sandbox-guard-audit.log");
   let state: PluginState = { kind: "not_started" };
 
   pi.registerFlag("sandbox-guard-audit", {
-    description: "Write pi-sandbox-guard audit events to stderr",
+    description: "Write audit events to ~/.pi/sandbox-guard-audit.log",
     type: "boolean",
     default: false,
   });
 
-  const getAudit = () => ((pi.getFlag("sandbox-guard-audit") as boolean) ? audit : undefined);
+  const getAudit = () => ((pi.getFlag("sandbox-guard-audit") as boolean) ? fileAuditSink : undefined);
   const registeredTools = new Set<string>();
 
   pi.on("session_start", async (_event, ctx) => {

@@ -28,6 +28,7 @@ export class ReviewService {
     }
 
     this.audit?.({ type: "review_request", command: request.command, cwd: request.cwd });
+    setStatus(ctx, `reviewing bypass: ${truncateForStatus(request.command)}`);
 
     try {
       const decision = await withTimeout(
@@ -37,16 +38,36 @@ export class ReviewService {
       );
       this.audit?.({ type: "review_outcome", outcome: decision.outcome, rationale: decision.rationale });
       if (decision.outcome !== "allow") {
+        notify(ctx, `Bypass denied: ${decision.rationale}`, "error");
+        setStatus(ctx, "bypass denied");
         throw new ReviewDeniedError(`reviewer denied bypass: ${decision.rationale}`);
       }
+      notify(ctx, `Bypass approved: ${decision.rationale}`, "warning");
+      setStatus(ctx, "bypass approved");
       return decision;
     } catch (error) {
       if (error instanceof ReviewDeniedError) {
+        setStatus(ctx, "bypass denied");
         throw error;
       }
+      notify(ctx, "Reviewer failed closed, bypass denied", "error");
+      setStatus(ctx, "reviewer failed");
       throw new ReviewDeniedError(`reviewer failed closed: ${errorMessage(error)}`, error);
     }
   }
+}
+
+function setStatus(ctx: ExtensionContext, text: string): void {
+  ctx.ui.setStatus?.("sandbox-guard", text);
+}
+
+function notify(ctx: ExtensionContext, text: string, level: "info" | "warning" | "error"): void {
+  ctx.ui.notify?.(text, level);
+}
+
+function truncateForStatus(text: string, maxLen = 60): string {
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen - 3)}...`;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

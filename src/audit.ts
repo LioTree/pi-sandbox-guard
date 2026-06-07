@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+
 export type AuditEvent =
   | { type: "config_loaded"; sourcePath: string; enabled: boolean }
   | { type: "config_missing"; cwd: string; checkedPaths: string[] }
@@ -16,8 +20,16 @@ export type AuditSink = (event: AuditEvent) => void;
 
 export const noopAuditSink: AuditSink = () => {};
 
-export function createConsoleAuditSink(): AuditSink {
+function ensureDir(filePath: string): void {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+export function createFileAuditSink(filePath?: string): AuditSink {
+  if (!filePath) return noopAuditSink;
+  const resolved = filePath.startsWith("~") ? path.join(os.homedir(), filePath.slice(1)) : filePath;
+  ensureDir(resolved);
   return (event) => {
-    process.stderr.write(`[pi-sandbox-guard] ${JSON.stringify(event)}\n`);
+    fs.appendFileSync(resolved, `${JSON.stringify(event)}\n`);
   };
 }

@@ -43,7 +43,9 @@ function parseReviewerConfig(value: unknown): RawGuardConfig["reviewer"] {
   const enabled = requireBoolean(reviewer.enabled, "reviewer.enabled");
   const timeoutMs = requirePositiveInteger(reviewer.timeoutMs, "reviewer.timeoutMs");
   const maxTranscriptChars = requirePositiveInteger(reviewer.maxTranscriptChars, "reviewer.maxTranscriptChars");
-  return { enabled, timeoutMs, maxTranscriptChars };
+  const model = parseOptionalString(reviewer.model, "reviewer.model");
+  const thinkingLevel = parseOptionalThinkingLevel(reviewer.thinkingLevel, "reviewer.thinkingLevel");
+  return { enabled, timeoutMs, maxTranscriptChars, model, thinkingLevel };
 }
 
 function parseSandboxRuntimeConfig(value: unknown, field: string): SandboxRuntimeConfig {
@@ -78,6 +80,26 @@ function requireBoolean(value: unknown, field: string): boolean {
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new ConfigError(`${field} must be a non-empty string`);
+  }
+  return value;
+}
+
+function parseOptionalString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length === 0) {
+    throw new ConfigError(`${field} must be a non-empty string when provided`);
+  }
+  return value;
+}
+
+const validThinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+
+function parseOptionalThinkingLevel(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !validThinkingLevels.has(value)) {
+    throw new ConfigError(
+      `${field} must be one of: ${[...validThinkingLevels].join(", ")}`,
+    );
   }
   return value;
 }

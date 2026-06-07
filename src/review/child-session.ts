@@ -3,6 +3,7 @@ import {
   DefaultResourceLoader,
   SessionManager,
   SettingsManager,
+  type CreateAgentSessionOptions,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
@@ -47,6 +48,22 @@ function buildReviewerServices(
   };
 }
 
+function resolveReviewerModel(
+  modelConfig: string | undefined,
+  ctx: ExtensionContext,
+): typeof ctx.model {
+  if (modelConfig) {
+    const slashIndex = modelConfig.indexOf("/");
+    if (slashIndex > 0) {
+      const provider = modelConfig.slice(0, slashIndex);
+      const modelId = modelConfig.slice(slashIndex + 1);
+      const found = ctx.modelRegistry.find(provider, modelId);
+      if (found) return found;
+    }
+  }
+  return ctx.model;
+}
+
 export class PiChildSessionReviewBackend implements ReviewBackend {
   async review(request: ReviewRequest, ctx: ExtensionContext): Promise<ReviewDecision> {
     let recordedDecision: ReviewDecision | undefined;
@@ -73,10 +90,12 @@ export class PiChildSessionReviewBackend implements ReviewBackend {
       });
       await resourceLoader.reload();
 
+      const model = resolveReviewerModel(request.config.reviewer?.model, ctx);
+
       const { session } = await createAgentSession({
         cwd: request.cwd,
-        model: ctx.model,
-        thinkingLevel: "off",
+        model,
+        thinkingLevel: (request.config.reviewer?.thinkingLevel ?? "off") as CreateAgentSessionOptions["thinkingLevel"],
         noTools: "all",
         tools: ["bash", "read", "grep", "find", "ls", "review_decision"],
         customTools: [

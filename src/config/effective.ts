@@ -18,6 +18,8 @@ export type ReviewerConfig = {
   enabled: boolean;
   timeoutMs: number;
   maxTranscriptChars: number;
+  model?: string;
+  thinkingLevel?: string;
 };
 
 export type RawGuardConfig = {
