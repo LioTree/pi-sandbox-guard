@@ -4,7 +4,7 @@
 
 v1 接管这些 Pi 内置工具：`bash`、`read`、`write`、`edit`、`grep`、`find`、`ls`。所有 shell 执行、文件读写、搜索、列表和 explicit bypass 都必须经过同一套配置、policy 和 audit 流程。
 
-完整架构说明见 [docs/architecture.md](docs/architecture.md)，配置格式见 [docs/config.md](docs/config.md)，测试策略见 [docs/testing.md](docs/testing.md)。修改代码前先读这份入口规范；涉及 config、policy、runtime、reviewer 或测试行为时，再读对应文档。
+用户入口见 [README.md](README.md)。架构边界见 [docs/architecture.md](docs/architecture.md)，配置格式见 [docs/config.md](docs/config.md)，测试策略见 [docs/testing.md](docs/testing.md)。这些文档描述安全语义和工作约束；具体类型、函数名、文件布局以当前代码为准。
 
 ## 必须保持的安全不变量
 
@@ -13,32 +13,26 @@ v1 接管这些 Pi 内置工具：`bash`、`read`、`write`、`edit`、`grep`、
 - 配置不能有隐藏安全默认值。任何有安全含义的行为都必须出现在 effective configuration 中，或从显式配置经过可审计 compile 步骤派生。
 - `bash` 默认走 `sandbox-runtime`。只有显式 `bypassSandbox: true` 才能触发 reviewer。
 - reviewer 只能用于 explicit bypass，且必须 fail closed：超时、异常、输出非法或拒绝时都不能放行。
-- reviewer 的证据收集工具不得拥有比 parent policy 更宽的文件系统读取权限。
+- reviewer 的证据收集工具不得拥有比 parent policy 更宽的读取权限，也不得拥有写入或 bypass 能力。
 - 每个 sandboxed command 退出后都必须调用 `SandboxManager.cleanupAfterCommand()`，避免 Linux sandbox backend 在 host 上留下空白 mount point 文件。
 - audit event 只能记录结构化元数据和决策结果，不能写入 secret file contents。
 
 ## 工作方式
 
-代码按 ports/adapters + functional core 组织。外层 adapter 可以依赖 Pi SDK 和 `sandbox-runtime`；内层 config/policy 模块应只处理普通 typed object，便于单元测试和安全审计。
+代码按 ports/adapters + functional core 思路组织。外层 adapter 可以依赖 Pi SDK 和 `sandbox-runtime`；内层 config/policy 逻辑应尽量只处理普通 typed object，便于单元测试和安全审计。
 
-修改工具行为时遵循统一流程：
-
-```ts
-const request = toCapabilityRequest(params, ctx);
-const decision = policy.decide(request, effectiveConfig);
-return executor.execute(request, decision);
-```
+修改工具行为时必须保持统一流程：先把工具参数规范化为 capability request，再由 policy 作唯一决策，最后根据 decision 执行或拒绝。
 
 不要让 `read`、`write`、`edit`、`grep`、`find`、`ls` 各自发明权限检查。路径、symlink、搜索范围和列表过滤都应回到同一份 path policy。
 
-## 模块边界
+## 边界约定
 
-- `config/`：查找、加载、校验并 compile 配置，产出 `EffectiveConfig`。
-- `policy/`：解释 `EffectiveConfig`，对 capability request 作出决策，并生成可展示解释。
-- `runtime/`：封装 `SandboxManager` 和 sandboxed command 的进程执行细节。
-- `tools/`：Pi 工具适配层，只负责参数转换、调用 policy 和执行结果返回。
-- `review/`：explicit bypass 的 LLM review 服务，以及受限只读 reviewer tools。
-- `audit.ts` 和 `errors.ts`：统一结构化审计事件和 typed errors。
+- config：查找、加载、校验并 compile 配置；安全相关默认值必须可审计。
+- policy：解释 effective configuration，对 capability request 作唯一安全决策。
+- runtime：封装 `sandbox-runtime` 和 sandboxed command 的进程执行细节。
+- tools：Pi 工具适配层，只负责参数转换、调用 policy 和返回执行结果。
+- review：只处理 explicit bypass 审批，并使用受限证据收集工具。
+- audit/errors：统一结构化审计事件和 typed errors。
 
 ## 配置模型
 

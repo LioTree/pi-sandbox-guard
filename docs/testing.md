@@ -12,7 +12,7 @@
 
 - config schema validation。
 - config locations 和 single-config 选择逻辑。
-- config compile 到 `EffectiveConfig`。
+- config compile 到 effective configuration。
 - path policy 的 allow/deny、读写权限、搜索权限和列表权限。
 - symlink 和不存在写入目标的路径解析规则。
 - policy decision：`deny`、`native`、`sandboxed`、`review`。
@@ -25,11 +25,11 @@
 适用于 `tools/` 和 `review/`：
 
 - mock Pi tool params、tool context 和 services。
-- 验证 tool adapter 会先调用 `toCapabilityRequest(...)`。
-- 验证所有工具都会进入同一个 `policy.decide(...)`。
+- 验证 tool adapter 会先规范化为 capability request。
+- 验证所有工具都会进入同一个 policy decision 流程。
 - 验证 `deny` 不会执行底层 native filesystem 或 sandbox command。
 - 验证 `review` 只由 explicit `bypassSandbox: true` 触发。
-- 验证 reviewer tools 使用同一份 `pathPolicy`，不能读取 parent policy 不允许的路径。
+- 验证 reviewer 取证工具使用同一份或更严格的 path policy，不能读取 parent policy 不允许的路径，也不能写入或 bypass。
 
 Adapter contract 测试不需要真实 Pi session。Pi SDK child session 的行为可以通过薄 wrapper mock 掉；真实 session 只放到可选 smoke test。
 
@@ -45,11 +45,11 @@ Adapter contract 测试不需要真实 Pi session。Pi SDK child session 的行�
 - denied path 在 sandboxed command 中不可读。
 - allowed write path 可写。
 - denied write path 不可写。
-- `wrapWithSandboxArgv()` 确实被用于构造 sandboxed command。
+- sandbox-runtime 的 argv wrapping 确实被用于构造 sandboxed command。
 - sandbox violation stderr 会经过 annotation，返回清晰错误信息。
 - command exit 后调用 `cleanupAfterCommand()`。
 - 不存在的 denied path 在 command 结束后不会在 host 上留下空白文件，例如 `.claude`。
-- `SandboxManager.initialize(...)` 失败时插件进入 failed 或 disabled 状态，不能继续放行工具。
+- sandbox runtime 初始化失败时插件进入 failed 或 disabled 状态，不能继续放行工具。
 - command spawn、execution 或 cleanup 失败时行为明确，并且默认 fail closed。
 
 如果网络策略支持禁网，还应覆盖：
@@ -63,10 +63,10 @@ Adapter contract 测试不需要真实 Pi session。Pi SDK child session 的行�
 
 同一份 `sandbox.filesystem` 应同时驱动：
 
-- `SandboxRuntimeConfig`。
+- sandbox runtime 文件系统配置。
 - native `read`、`write`、`edit`。
 - `grep`、`find`、`ls`。
-- reviewer 的只读工具。
+- reviewer 取证工具，包括只读工具和受限 sandboxed shell。
 
 测试应构造同一组 allow/deny 路径，并分别验证 shell、native tool、search/list、reviewer tool 的结果一致。
 
@@ -88,7 +88,7 @@ Adapter contract 测试不需要真实 Pi session。Pi SDK child session 的行�
 - 设置 `bypassSandbox: true` 时，policy decision 为 `review`。
 - reviewer allow 后才允许执行非 sandboxed 行为。
 - reviewer deny、timeout、异常、非法输出都必须 deny。
-- reviewer 不应拥有 shell、write、edit 工具。
+- reviewer 不应拥有 native shell、write、edit 或 bypass 能力；如提供 shell，只能是受限 sandboxed shell。
 
 ### Cleanup
 
@@ -101,25 +101,9 @@ Adapter contract 测试不需要真实 Pi session。Pi SDK child session 的行�
 
 这个场景是 `sandbox-runtime` 集成测试的必测项，不应只用 mock 验证函数调用次数。
 
-## 测试目录建议
+## 测试命令
 
-```text
-tests/
-  unit/
-    config/
-    policy/
-    audit/
-    errors/
-
-  contract/
-    tools/
-    review/
-
-  integration/
-    sandbox-runtime/
-```
-
-默认测试命令应运行 unit 和 contract 测试。`sandbox-runtime` 集成测试可以单独命名，例如 `test:integration:sandbox`，但在发布 v1 前必须运行通过。
+测试命令以 `package.json` 为准。默认测试应覆盖 unit 和 contract 层；真实 `sandbox-runtime` 集成测试可以单独运行，但涉及 runtime 安全语义或发布 v1 前必须通过。
 
 ## 跳过和平台差异
 

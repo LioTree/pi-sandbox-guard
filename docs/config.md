@@ -54,7 +54,7 @@
 
 **开窗匹配规则**：
 - `denyRead` 父目录 + `allowRead` 子目录 → 子目录可读（前缀匹配）
-- `denyRead` 文件 + `allowRead` 父目录 → 文件仍不可读（sandbox-runtime 对文件 deny 要求精确同名路径才能 override）
+- `denyRead` 文件 + `allowRead` 父目录 → 文件仍不可读（sandbox-runtime 内部 mount 对文件 deny 要求精确同名路径才能 override；native 工具不受此限制，走 path-policy 开窗会成功）
 
 ### 写权限：默认全关 + allow 开放
 
@@ -107,8 +107,8 @@
   },
   "reviewer": {
     "enabled": true,
-    "model": "anthropic/claude-sonnet-4-20250514",
-    "thinkingLevel": "high",
+    "model": "deepseek/deepseek-v4-flash",
+    "thinkingLevel": "off",
     "timeoutMs": 30000,
     "maxTranscriptChars": 12000
   }
@@ -121,7 +121,7 @@
 - `enabled`：必填，是否启用 reviewer。
 - `timeoutMs`：必填，reviewer 超时时间（毫秒）。超时 → fail closed → deny。
 - `maxTranscriptChars`：必填，传给 reviewer 的最大会话长度（字符数）。
-- `model`：可选，审批所用模型，格式 `provider/modelId`（如 `"anthropic/claude-sonnet-4-20250514"`）。不填则复用父 session 的模型。
+- `model`：可选，审批所用模型，格式 `provider/modelId`（如 `"deepseek/deepseek-v4-flash"`）。不填则复用父 session 的模型。
 - `thinkingLevel`：可选，思考强度，取值 `off` / `minimal` / `low` / `medium` / `high` / `xhigh`。不填默认 `off`。
 
 Reviewer 子 session 的工具（read、grep 等）复用同一份 `sandbox.filesystem` path policy，不会获得比父 session 更宽的读取权限。
