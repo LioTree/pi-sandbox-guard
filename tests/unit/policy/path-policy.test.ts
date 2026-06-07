@@ -71,6 +71,38 @@ describe("path policy", () => {
     });
   });
 
+  it("treats **/ globs as matching root-level and nested paths without leaking outside cwd", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-policy-"));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), "psg-policy-outside-"));
+    const policy = compilePathPolicy(
+      {
+        denyRead: ["**/.env"],
+        allowWrite: [root],
+        denyWrite: ["**/.git"],
+      },
+      root,
+    );
+
+    await expect(checkPathAccess(policy, path.join(root, ".env"), "read")).resolves.toMatchObject({
+      allowed: false,
+    });
+    await expect(checkPathAccess(policy, path.join(root, "nested", ".env"), "read")).resolves.toMatchObject({
+      allowed: false,
+    });
+    await expect(checkPathAccess(policy, path.join(outsideRoot, ".env"), "read")).resolves.toMatchObject({
+      allowed: true,
+    });
+    await expect(checkPathAccess(policy, path.join(root, ".git"), "write")).resolves.toMatchObject({
+      allowed: false,
+    });
+    await expect(checkPathAccess(policy, path.join(root, ".git", "hooks", "pre-commit"), "write")).resolves.toMatchObject({
+      allowed: false,
+    });
+    await expect(checkPathAccess(policy, path.join(root, "nested", ".git", "hooks", "pre-commit"), "write")).resolves.toMatchObject({
+      allowed: false,
+    });
+  });
+
   it("resolves symlinks before deciding read access", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "psg-policy-"));
     const publicDir = path.join(root, "public");

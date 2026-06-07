@@ -2,6 +2,7 @@ import type { FilesystemConfig } from "@anthropic-ai/sandbox-runtime";
 import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { createGlobMatcher, matchesGlobOrAncestor, type GlobMatcher } from "./glob-match";
 
 export type AccessMode = "read" | "write";
 
@@ -9,6 +10,7 @@ type PathRule = {
   raw: string;
   pattern: string;
   hasMagic: boolean;
+  globMatcher?: GlobMatcher;
 };
 
 export type CompiledPathPolicy = {
@@ -108,7 +110,13 @@ export function resolveConfigPath(value: string, cwd: string): string {
 function compileRules(values: string[], cwd: string): PathRule[] {
   return values.map((value) => {
     const pattern = resolveConfigPath(value, cwd);
-    return { raw: value, pattern, hasMagic: hasGlobMagic(pattern) };
+    const hasMagic = hasGlobMagic(pattern);
+    return {
+      raw: value,
+      pattern,
+      hasMagic,
+      globMatcher: hasMagic ? createGlobMatcher(pattern) : undefined,
+    };
   });
 }
 
@@ -140,7 +148,7 @@ function matchesAny(rules: PathRule[], targetPath: string): boolean {
 function matchesRule(rule: PathRule, targetPath: string): boolean {
   const normalizedTarget = path.resolve(targetPath);
   if (rule.hasMagic) {
-    return globToRegExp(rule.pattern).test(normalizedTarget);
+    return rule.globMatcher ? matchesGlobOrAncestor(normalizedTarget, rule.globMatcher) : false;
   }
   const normalizedPattern = path.resolve(rule.pattern);
   return normalizedTarget === normalizedPattern || normalizedTarget.startsWith(normalizedPattern + path.sep);
@@ -148,28 +156,4 @@ function matchesRule(rule: PathRule, targetPath: string): boolean {
 
 function hasGlobMagic(value: string): boolean {
   return /[*?\[\]{}]/.test(value);
-}
-
-function globToRegExp(pattern: string): RegExp {
-  let out = "^";
-  for (let i = 0; i < pattern.length; i++) {
-    const char = pattern[i]!;
-    const next = pattern[i + 1];
-    if (char === "*" && next === "*") {
-      out += ".*";
-      i++;
-    } else if (char === "*") {
-      out += `[^${escapeRegExp(path.sep)}]*`;
-    } else if (char === "?") {
-      out += `[^${escapeRegExp(path.sep)}]`;
-    } else {
-      out += escapeRegExp(char);
-    }
-  }
-  out += `(?:${escapeRegExp(path.sep)}.*)?$`;
-  return new RegExp(out);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

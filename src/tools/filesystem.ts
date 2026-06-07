@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { CompiledPathPolicy } from "../policy/path-policy";
 import { checkPathAccess, filterReadableChildren } from "../policy/path-policy";
+import { createGlobMatcher } from "../policy/glob-match";
 import { PolicyDeniedError } from "../errors";
 
 export async function walkReadableFiles(
@@ -47,8 +48,7 @@ export function normalizeCase(value: string, ignoreCase?: boolean): string {
 }
 
 export function globMatcher(pattern: string): (file: string) => boolean {
-  const regex = globToRegExp(pattern);
-  return (file) => regex.test(file.split(path.sep).join("/"));
+  return createGlobMatcher(pattern);
 }
 
 export function filePatternMatcher(pattern: string): (file: string) => boolean {
@@ -57,27 +57,6 @@ export function filePatternMatcher(pattern: string): (file: string) => boolean {
     return matcher;
   }
   return (file) => matcher(path.basename(file));
-}
-
-function globToRegExp(pattern: string): RegExp {
-  let out = "^";
-  const normalized = pattern.split(path.sep).join("/");
-  for (let i = 0; i < normalized.length; i++) {
-    const char = normalized[i]!;
-    const next = normalized[i + 1];
-    if (char === "*" && next === "*") {
-      out += ".*";
-      i++;
-    } else if (char === "*") {
-      out += "[^/]*";
-    } else if (char === "?") {
-      out += "[^/]";
-    } else {
-      out += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    }
-  }
-  out += "$";
-  return new RegExp(out);
 }
 
 export async function executeRead(

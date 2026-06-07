@@ -15,7 +15,7 @@
 
 核心思路：
 
-- **读权限**：阻止 agent 窃取 API key 和凭证文件（`.env`、各工具的全局 auth 配置）。
+- **读权限**：阻止 agent 窃取 API key 和凭证文件。
 - **写权限**：在 `allowWrite: ["."]` 区域内排除各工具的自动执行入口，阻止投毒节点写入可自动加载的代码。
 
 ```json
@@ -62,7 +62,7 @@
 
 | 路径 | 目的 |
 |------|------|
-| `**/.env` | 任意位置的 .env 文件（含 API key、数据库密码等） |
+| `**/.env` | 当前工作目录下任意深度的 `.env` 文件（API key、数据库密码等） |
 | `~/.ssh` | SSH 私钥，前缀匹配覆盖 `~/.ssh/` 下所有文件 |
 | `~/.aws` | AWS credentials（`~/.aws/credentials` 等） |
 | `~/.gnupg` | GPG 私钥 |
@@ -71,6 +71,10 @@
 | `~/.claude.json` | Claude Code OAuth token 和 MCP 配置（独立文件，`~/.claude` 目录前缀无法覆盖） |
 | `~/.codex` | Codex 全局配置目录 |
 | `~/.pi` | Pi 全局配置目录，包含 `agent/auth.json`（存有 25+ provider 的 API key 和 OAuth token，文件权限 `0600`） |
+
+> **关于 `**/.env` 的作用范围**：`**/.env` 只匹配 `<cwd>` 目录树内的 `.env`（如 `/repo/.env`、`/repo/app/.env`），不覆盖 `/other-project/.env`。因为相对路径规则先相对于 `cwd` 解析，且 Linux sandbox 后端不支持 `/**/.env` 这类从根开始的 glob（macOS 支持较好）。对“任意项目中禁止读 `.env`”这个目标，当前推荐配置不构成跨平台保证。
+
+> 如需更广覆盖，可显式添加如 `~/code/**/.env`、`~/work/**/.env` 等规则。
 
 ### denyWrite 说明
 
@@ -85,7 +89,7 @@
 | `**/.pi` | **高风险**：阻止写入 `extensions/*.ts`。Pi 受信项目启动时自动执行 `.pi/extensions/` 中的 TS/JS 文件（通过 jiti 加载），扩展拥有完整系统权限、可注册 hooks 和自定义 tools |
 | `**/opencode.json` | 阻止写入 OpenCode 项目配置（修改 model/provider/permission 等） |
 
-所有 `**/` 前缀使用 glob 模式以匹配任意深度的子目录（子模块、worktree、嵌套路径等），语义为"当前工作目录下任意位置的此文件/目录"。
+所有 `**/` 前缀匹配当前工作目录（含根目录）下任意深度的此文件/目录，涵盖子模块、worktree 等。
 
 ### 威胁链路
 
@@ -113,7 +117,7 @@
 
 **优先级**：`allowRead` > `denyRead`。一条路径只有在命中 `denyRead` **且**未命中 `allowRead` 时才被拒绝。
 
-`allowRead` **不是独立门控**——它只在 `denyRead` 内部起作用。这意味着无法表达"只允许读当前工作目录"：因为读默认全开，不设 `denyRead` 就等于放行所有路径，而 `denyRead: ["/"]` 会阻断 sandbox 内系统路径导致无法执行任何命令。
+`allowRead` **不是独立门控**——它只在 `denyRead` 内部起作用。这意味着无法表达"只允许读当前工作目录"：因为读默认全开，不设 `denyRead` 就等于放行所有路径，而 `denyRead: ["/"]` 会阻断 sandbox 内系统路径导致无法执行任何命令。没有真正的"只读 cwd"白名单——当前模型只能做"默认可读 + `denyRead` 排除敏感路径"的 hardening。
 
 **开窗匹配规则**：
 - `denyRead` 父目录 + `allowRead` 子目录 → 子目录可读（前缀匹配）
