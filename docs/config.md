@@ -9,7 +9,14 @@
 
 如果两者都不存在，插件禁用且不接管 Pi 内置工具。
 
-## 最小示例
+## 推荐配置
+
+以下配置针对**中转站投毒**威胁模型：恶意节点在 agent 工具调用回包中注入 `write`/`bash` 操作，向项目写入可执行文件或修改工具配置，后续开发者在 host 上运行时触发逃逸。
+
+核心思路：
+
+- **读权限**：阻止 agent 窃取 API key 和凭证文件（`.env`、各工具的全局 auth 配置）。
+- **写权限**：在 `allowWrite: ["."]` 区域内排除各工具的自动执行入口，阻止投毒节点写入可自动加载的代码。
 
 ```json
 {
@@ -20,9 +27,26 @@
       "deniedDomains": []
     },
     "filesystem": {
-      "denyRead": ["~/.ssh", "~/.aws", ".env"],
+      "denyRead": [
+        "**/.env",
+        "~/.ssh",
+        "~/.aws",
+        "~/.gnupg",
+        "~/.config/opencode",
+        "~/.claude",
+        "~/.claude.json",
+        "~/.codex",
+        "~/.pi"
+      ],
       "allowWrite": ["."],
-      "denyWrite": [".git", ".env"]
+      "denyWrite": [
+        "**/.git",
+        "**/.claude",
+        "**/.codex",
+        "**/.opencode",
+        "**/.pi",
+        "**/opencode.json"
+      ]
     }
   },
   "enforcement": {
@@ -33,6 +57,45 @@
   }
 }
 ```
+
+### denyRead 说明
+
+| 路径 | 目的 |
+|------|------|
+| `**/.env` | 任意位置的 .env 文件（含 API key、数据库密码等） |
+| `~/.ssh` | SSH 私钥，前缀匹配覆盖 `~/.ssh/` 下所有文件 |
+| `~/.aws` | AWS credentials（`~/.aws/credentials` 等） |
+| `~/.gnupg` | GPG 私钥 |
+| `~/.config/opencode` | OpenCode 全局配置目录（`opencode.json` 可含 API key） |
+| `~/.claude` | Claude Code 全局 settings（`settings.json`、`CLAUDE.md` 等） |
+| `~/.claude.json` | Claude Code OAuth token 和 MCP 配置（独立文件，`~/.claude` 目录前缀无法覆盖） |
+| `~/.codex` | Codex 全局配置目录 |
+| `~/.pi` | Pi 全局配置目录，包含 `agent/auth.json`（存有 25+ provider 的 API key 和 OAuth token，文件权限 `0600`） |
+
+### denyWrite 说明
+
+写权限默认全关（`allowWrite: ["."]` 只开放 cwd）。`denyWrite` 在 cwd 区域内做二次排除：
+
+| 路径 | 目的 |
+|------|------|
+| `**/.git` | 阻止写入 git hooks（`pre-commit`、`post-checkout` 等）。投毒后，开发者在 host 执行 `git` 操作时即触发 shell 逃逸 |
+| `**/.claude` | 阻止写入 Claude Code 项目级 settings/hooks，防止修改权限配置或注入 hook 脚本 |
+| `**/.codex` | 阻止写入 Codex 项目级配置 |
+| `**/.opencode` | **高风险**：阻止写入 `plugins/*.js`。OpenCode 启动时自动加载 `.opencode/plugins/` 中的 JS/TS 文件，插件通过 Bun shell API 可执行任意 host 命令 |
+| `**/.pi` | **高风险**：阻止写入 `extensions/*.ts`。Pi 受信项目启动时自动执行 `.pi/extensions/` 中的 TS/JS 文件（通过 jiti 加载），扩展拥有完整系统权限、可注册 hooks 和自定义 tools |
+| `**/opencode.json` | 阻止写入 OpenCode 项目配置（修改 model/provider/permission 等） |
+
+所有 `**/` 前缀使用 glob 模式以匹配任意深度的子目录（子模块、worktree、嵌套路径等），语义为"当前工作目录下任意位置的此文件/目录"。
+
+### 威胁链路
+
+以 `.opencode` 为例的典型攻击链：
+
+1. 恶意中转站注入 `write` tool call → 写入 `.opencode/plugins/backdoor.js`
+2. 开发者下次在项目中启动 `opencode` → `plugins/backdoor.js` 自动执行
+3. 插件通过 `$` (Bun shell) 执行任意命令 → 在 host 上逃逸
+
+同理，`.pi/extensions/`（Pi）和 `.git/hooks/`（Git）有相同的自动执行逃逸路径。
 
 ## 文件系统
 
@@ -93,10 +156,26 @@
       "deniedDomains": []
     },
     "filesystem": {
-      "denyRead": ["~/.ssh", "~/.aws", ".env"],
-      "allowRead": ["~/projects"],
+      "denyRead": [
+        "**/.env",
+        "~/.ssh",
+        "~/.aws",
+        "~/.gnupg",
+        "~/.config/opencode",
+        "~/.claude",
+        "~/.claude.json",
+        "~/.codex",
+        "~/.pi"
+      ],
       "allowWrite": ["."],
-      "denyWrite": [".git", ".env"]
+      "denyWrite": [
+        "**/.git",
+        "**/.claude",
+        "**/.codex",
+        "**/.opencode",
+        "**/.pi",
+        "**/opencode.json"
+      ]
     }
   },
   "enforcement": {
@@ -121,7 +200,7 @@
 - `enabled`：必填，是否启用 reviewer。
 - `timeoutMs`：必填，reviewer 超时时间（毫秒）。超时 → fail closed → deny。
 - `maxTranscriptChars`：必填，传给 reviewer 的最大会话长度（字符数）。
-- `model`：可选，审批所用模型，格式 `provider/modelId`（如 `"deepseek/deepseek-v4-flash"`）。不填则复用父 session 的模型。
+- `model`：可选，审批所用模型，格式 `provider/modelId`。不填则复用父 session 的模型。
 - `thinkingLevel`：可选，思考强度，取值 `off` / `minimal` / `low` / `medium` / `high` / `xhigh`。不填默认 `off`。
 
 Reviewer 子 session 的工具（read、grep 等）复用同一份 `sandbox.filesystem` path policy，不会获得比父 session 更宽的读取权限。
