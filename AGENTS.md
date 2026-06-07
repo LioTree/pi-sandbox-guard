@@ -14,7 +14,7 @@ v1 接管这些 Pi 内置工具：`bash`、`read`、`write`、`edit`、`grep`、
 - `bash` 默认走 `sandbox-runtime`。只有显式 `bypassSandbox: true` 才能触发 reviewer。
 - reviewer 只能用于 explicit bypass，且必须 fail closed：超时、异常、输出非法或拒绝时都不能放行。
 - reviewer 的证据收集工具不得拥有比 parent policy 更宽的读取权限，也不得拥有写入或 bypass 能力。
-- 每个 sandboxed command 退出后都必须调用 `SandboxManager.cleanupAfterCommand()`，避免 Linux sandbox backend 在 host 上留下空白 mount point 文件。
+- 每个 sandboxed command 退出后都必须调用 `SandboxManager.cleanupAfterCommand()`（通过 `SandboxSession.prepareCommand()` 返回的 `finish()` 方法），避免 Linux sandbox backend 在 host 上留下空白 mount point 文件。
 - audit event 只能记录结构化元数据和决策结果，不能写入 secret file contents。
 
 ## 工作方式

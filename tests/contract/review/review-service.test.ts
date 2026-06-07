@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ReviewService, type ReviewBackend } from "../../../src/review/service";
-import { effectiveConfig, fakeExtensionContext } from "../../helpers";
+import { SandboxSession } from "../../../src/runtime/sandbox-session";
+import { effectiveConfig, fakeExtensionContext, fakeSandboxManager } from "../../helpers";
 
 describe("ReviewService", () => {
   it("denies when reviewer is not enabled", async () => {
@@ -11,7 +12,7 @@ describe("ReviewService", () => {
     const service = new ReviewService(backendReturning({ outcome: "allow", rationale: "ok" }));
 
     await expect(
-      service.review({ command: "id", cwd: root, config: effectiveConfig(root) }, fakeExtensionContext(root)),
+      service.review(reviewRequest(root, effectiveConfig(root)), fakeExtensionContext(root)),
     ).rejects.toThrow(/reviewer is not enabled/);
   });
 
@@ -23,7 +24,7 @@ describe("ReviewService", () => {
     });
     const service = new ReviewService(backendReturning({ outcome: "allow", rationale: "ok" }));
 
-    await expect(service.review({ command: "id", cwd: root, config }, fakeExtensionContext(root))).resolves.toEqual({
+    await expect(service.review(reviewRequest(root, config), fakeExtensionContext(root))).resolves.toEqual({
       outcome: "allow",
       rationale: "ok",
     });
@@ -37,7 +38,7 @@ describe("ReviewService", () => {
     });
     const service = new ReviewService(backendReturning({ outcome: "deny", rationale: "too risky" }));
 
-    await expect(service.review({ command: "id", cwd: root, config }, fakeExtensionContext(root))).rejects.toThrow(
+    await expect(service.review(reviewRequest(root, config), fakeExtensionContext(root))).rejects.toThrow(
       /reviewer denied bypass: too risky/,
     );
   });
@@ -54,7 +55,7 @@ describe("ReviewService", () => {
       },
     });
 
-    await expect(service.review({ command: "id", cwd: root, config }, fakeExtensionContext(root))).rejects.toThrow(
+    await expect(service.review(reviewRequest(root, config), fakeExtensionContext(root))).rejects.toThrow(
       /reviewer failed closed: backend crashed/,
     );
   });
@@ -72,11 +73,41 @@ describe("ReviewService", () => {
       },
     });
 
-    await expect(service.review({ command: "id", cwd: root, config }, fakeExtensionContext(root))).rejects.toThrow(
+    await expect(service.review(reviewRequest(root, config), fakeExtensionContext(root))).rejects.toThrow(
       /reviewer timed out after 1ms/,
     );
   });
+
+  it("aborts the backend when reviewer timeout expires", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-review-"));
+    const config = effectiveConfig(root, {
+      enforcement: { tools: ["bash"], bypass: { mode: "review" } },
+      reviewer: { enabled: true, timeoutMs: 1, maxTranscriptChars: 1_000 },
+    });
+    let backendSignal: AbortSignal | undefined;
+    const service = new ReviewService({
+      async review(_request, _ctx, signal) {
+        backendSignal = signal;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return { outcome: "allow", rationale: "late" };
+      },
+    });
+
+    await expect(service.review(reviewRequest(root, config), fakeExtensionContext(root))).rejects.toThrow(
+      /reviewer timed out after 1ms/,
+    );
+    expect(backendSignal?.aborted).toBe(true);
+  });
 });
+
+function reviewRequest(root: string, config: ReturnType<typeof effectiveConfig>) {
+  return {
+    command: "id",
+    cwd: root,
+    config,
+    sandbox: new SandboxSession(fakeSandboxManager()),
+  };
+}
 
 function backendReturning(decision: Awaited<ReturnType<ReviewBackend["review"]>>): ReviewBackend {
   return {

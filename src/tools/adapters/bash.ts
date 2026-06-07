@@ -1,5 +1,6 @@
 import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { ReviewDeniedError } from "../../errors";
 import type { Services } from "../../runtime-state";
 import { runNativeCommand, runSandboxedCommand } from "../../runtime/command-runner";
 import { decideForTool, getToolCwd, textResult } from "../tool-context";
@@ -17,7 +18,6 @@ export function createBashTool(getServices: () => Services): ToolDefinition {
     description: "Execute a shell command. Commands run in sandbox by default. Set bypassSandbox: true only when an automatic security review is required.",
     promptSnippet: "Run shell commands through pi-sandbox-guard",
     parameters: bashSchema,
-    executionMode: "sequential",
     async execute(_toolCallId, params: { command: string; timeout?: number; bypassSandbox?: boolean }, signal, onUpdate, ctx: ExtensionContext) {
       const services = getServices();
       const cwd = getToolCwd(ctx, services.config.cwd);
@@ -39,7 +39,7 @@ export function createBashTool(getServices: () => Services): ToolDefinition {
           : await runSandboxedCommand(
               services.sandbox,
               params.command,
-              { cwd, timeout: params.timeout, signal, onData },
+              { cwd, timeout: params.timeout, signal, onData, sandboxConfig: services.config.sandboxRuntime },
               services.audit,
             );
 
@@ -59,6 +59,9 @@ async function runReviewedNativeCommand(
   onData: (data: Buffer) => void,
   ctx: ExtensionContext,
 ) {
-  await services.reviewer?.review({ command, cwd, config: services.config }, ctx);
+  if (!services.reviewer) {
+    throw new ReviewDeniedError("reviewer service is unavailable");
+  }
+  await services.reviewer.review({ command, cwd, config: services.config, sandbox: services.sandbox }, ctx);
   return runNativeCommand(command, { cwd, timeout, signal, onData });
 }

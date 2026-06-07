@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { appendChunk } from "./process-output";
 import type { SandboxSession } from "./sandbox-session";
 import { SandboxExecError, errorMessage } from "../errors";
@@ -9,6 +10,7 @@ export type CommandRunOptions = {
   timeout?: number;
   signal?: AbortSignal;
   onData?: (data: Buffer) => void;
+  sandboxConfig?: Partial<SandboxRuntimeConfig>;
 };
 
 export type CommandRunResult = {
@@ -23,20 +25,20 @@ export async function runSandboxedCommand(
   options: CommandRunOptions,
   audit?: AuditSink,
 ): Promise<CommandRunResult> {
-  let argv: string[];
-  let env: NodeJS.ProcessEnv;
+  let prepared: Awaited<ReturnType<SandboxSession["prepareCommand"]>>;
   try {
-    const wrapped = await sandbox.wrapArgv(command, options.signal);
-    argv = wrapped.argv;
-    env = wrapped.env;
+    prepared = await sandbox.prepareCommand(command, {
+      abortSignal: options.signal,
+      customConfig: options.sandboxConfig,
+    });
   } catch (error) {
     throw new SandboxExecError(`failed to wrap command with sandbox: ${errorMessage(error)}`, error);
   }
 
   try {
-    const result = await spawnCommand(argv, {
+    const result = await spawnCommand(prepared.argv, {
       ...options,
-      env: { ...process.env, ...env },
+      env: { ...process.env, ...prepared.env },
     });
     const annotatedStderr = sandbox.annotateStderr(command, result.stderr);
     const annotated = annotatedStderr !== result.stderr;
@@ -48,7 +50,7 @@ export async function runSandboxedCommand(
     return { ...result, stderr: annotatedStderr };
   } finally {
     try {
-      sandbox.cleanupAfterCommand();
+      prepared.finish();
     } catch (error) {
       throw new SandboxExecError(`sandbox cleanup failed: ${errorMessage(error)}`, error);
     }

@@ -13,6 +13,7 @@ export type SandboxManagerLike = Pick<
 
 export class SandboxSession {
   private initialized = false;
+  private readonly lifecycle = new AsyncRwLock();
 
   constructor(
     private readonly manager: SandboxManagerLike = SandboxManager,
@@ -20,16 +21,46 @@ export class SandboxSession {
   ) {}
 
   async initialize(config: SandboxRuntimeConfig): Promise<void> {
-    if (!this.manager.isSupportedPlatform()) {
-      throw new SandboxExecError(`sandbox-runtime is not supported on ${process.platform}`);
+    const release = await this.lifecycle.acquireWrite();
+    try {
+      if (!this.manager.isSupportedPlatform()) {
+        throw new SandboxExecError(`sandbox-runtime is not supported on ${process.platform}`);
+      }
+      await this.manager.initialize(config, undefined, this.enableLogMonitor);
+      this.initialized = true;
+    } finally {
+      release();
     }
-    await this.manager.initialize(config, undefined, this.enableLogMonitor);
-    this.initialized = true;
   }
 
-  async wrapArgv(command: string, abortSignal?: AbortSignal): Promise<{ argv: string[]; env: NodeJS.ProcessEnv }> {
-    this.assertInitialized();
-    return this.manager.wrapWithSandboxArgv(command, undefined, undefined, abortSignal);
+  async prepareCommand(command: string, options: SandboxCommandOptions = {}): Promise<PreparedSandboxCommand> {
+    const release = await this.lifecycle.acquireRead();
+    let released = false;
+    const finish = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      try {
+        this.cleanupAfterCommand();
+      } finally {
+        release();
+      }
+    };
+
+    try {
+      this.assertInitialized();
+      const wrapped = await this.manager.wrapWithSandboxArgv(
+        command,
+        undefined,
+        options.customConfig,
+        options.abortSignal,
+      );
+      return { ...wrapped, finish };
+    } catch (error) {
+      release();
+      throw error;
+    }
   }
 
   annotateStderr(command: string, stderr: string): string {
@@ -45,16 +76,118 @@ export class SandboxSession {
   }
 
   async reset(): Promise<void> {
-    if (!this.initialized) {
-      return;
+    const release = await this.lifecycle.acquireWrite();
+    try {
+      if (!this.initialized) {
+        return;
+      }
+      await this.manager.reset();
+      this.initialized = false;
+    } finally {
+      release();
     }
-    await this.manager.reset();
-    this.initialized = false;
   }
 
   private assertInitialized(): void {
     if (!this.initialized) {
       throw new SandboxExecError("sandbox session is not initialized");
+    }
+  }
+}
+
+export type SandboxCommandOptions = {
+  customConfig?: Partial<SandboxRuntimeConfig>;
+  abortSignal?: AbortSignal;
+};
+
+export type PreparedSandboxCommand = {
+  argv: string[];
+  env: NodeJS.ProcessEnv;
+  finish(): void;
+};
+
+type LockRelease = () => void;
+
+class AsyncRwLock {
+  private readers = 0;
+  private writerActive = false;
+  private readonly queue: Array<{
+    mode: "read" | "write";
+    resolve: (release: LockRelease) => void;
+  }> = [];
+
+  acquireRead(): Promise<LockRelease> {
+    if (!this.writerActive && !this.hasWaitingWriter()) {
+      this.readers++;
+      return Promise.resolve(this.createReadRelease());
+    }
+    return new Promise((resolve) => {
+      this.queue.push({ mode: "read", resolve });
+    });
+  }
+
+  acquireWrite(): Promise<LockRelease> {
+    if (!this.writerActive && this.readers === 0 && this.queue.length === 0) {
+      this.writerActive = true;
+      return Promise.resolve(this.createWriteRelease());
+    }
+    return new Promise((resolve) => {
+      this.queue.push({ mode: "write", resolve });
+    });
+  }
+
+  private hasWaitingWriter(): boolean {
+    return this.queue.some((entry) => entry.mode === "write");
+  }
+
+  private createReadRelease(): LockRelease {
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      this.readers--;
+      this.drain();
+    };
+  }
+
+  private createWriteRelease(): LockRelease {
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      this.writerActive = false;
+      this.drain();
+    };
+  }
+
+  private drain(): void {
+    if (this.writerActive || this.readers > 0) {
+      return;
+    }
+
+    const next = this.queue[0];
+    if (!next) {
+      return;
+    }
+
+    if (next.mode === "write") {
+      this.queue.shift();
+      this.writerActive = true;
+      next.resolve(this.createWriteRelease());
+      return;
+    }
+
+    while (this.queue[0]?.mode === "read") {
+      const reader = this.queue.shift();
+      if (!reader) {
+        return;
+      }
+      this.readers++;
+      reader.resolve(this.createReadRelease());
     }
   }
 }

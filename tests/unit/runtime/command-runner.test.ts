@@ -1,6 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import { SandboxExecError } from "../../../src/errors";
 import { runSandboxedCommand } from "../../../src/runtime/command-runner";
@@ -70,6 +71,55 @@ describe("runSandboxedCommand", () => {
     expect(result.stderr).toBe("denied[annotated]");
     expect(auditEvents).toContainEqual({ type: "sandbox_violation_annotation", command: "printf denied >&2", annotated: true });
     expect(auditEvents).toContainEqual({ type: "sandbox_command_exit", command: "printf denied >&2", cwd: root, exitCode: 0 });
+  });
+
+  it("passes per-command sandbox config to the sandbox wrapper", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-command-"));
+    const sandboxConfig = {
+      network: { allowedDomains: [], deniedDomains: [] },
+      filesystem: { denyRead: [], allowWrite: [], denyWrite: [] },
+    };
+    let capturedConfig: unknown;
+    const sandbox = new SandboxSession(
+      fakeSandboxManager({
+        wrapWithSandboxArgv: async (command: string, _binShell?: string, customConfig?: unknown) => {
+          capturedConfig = customConfig;
+          return { argv: [process.env.SHELL ?? "sh", "-lc", command], env: {} };
+        },
+      }),
+    );
+    await sandbox.initialize({ network: { allowedDomains: [], deniedDomains: [] }, filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } });
+
+    await runSandboxedCommand(sandbox, "true", { cwd: root, sandboxConfig });
+
+    expect(capturedConfig).toEqual(sandboxConfig);
+  });
+
+  it("waits for active commands before resetting the sandbox manager", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-command-"));
+    let resetResolved = false;
+    const sandbox = new SandboxSession(
+      fakeSandboxManager({
+        wrapWithSandboxArgv: async () => ({
+          argv: [process.execPath, "-e", "setTimeout(() => {}, 80)"],
+          env: {},
+        }),
+      }),
+    );
+    await sandbox.initialize({ network: { allowedDomains: [], deniedDomains: [] }, filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } });
+
+    const command = runSandboxedCommand(sandbox, "long-running", { cwd: root });
+    await delay(10);
+    const reset = sandbox.reset().then(() => {
+      resetResolved = true;
+    });
+
+    await delay(20);
+    expect(resetResolved).toBe(false);
+
+    await command;
+    await reset;
+    expect(resetResolved).toBe(true);
   });
 
   it("fails closed when cleanup fails", async () => {

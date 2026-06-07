@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { createBashTool } from "../../../src/tools/adapters/bash";
 import { createEditTool } from "../../../src/tools/adapters/edit";
 import { createFindTool } from "../../../src/tools/adapters/find";
 import { createGrepTool } from "../../../src/tools/adapters/grep";
@@ -10,6 +11,16 @@ import { createWriteTool } from "../../../src/tools/adapters/write";
 import { effectiveConfig, fakeExtensionContext, makeServices, toolText } from "../../helpers";
 
 describe("filesystem tool contracts", () => {
+  it("does not force parallel-safe tools to run sequentially", () => {
+    const getServices = () => {
+      throw new Error("unused");
+    };
+
+    expect(createWriteTool(getServices).executionMode).toBeUndefined();
+    expect(createEditTool(getServices).executionMode).toBeUndefined();
+    expect(createBashTool(getServices).executionMode).toBeUndefined();
+  });
+
   it("write enters policy before touching the filesystem", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "psg-write-tool-"));
     const target = path.join(root, "denied", "out.txt");

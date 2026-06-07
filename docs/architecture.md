@@ -34,7 +34,9 @@ policy 是唯一能在 `deny`、`native`、`sandboxed`、`review` 之间作选�
 
 `read`、`write`、`edit` 可以使用 native filesystem API，但执行前必须先通过 policy。`grep`、`find` 和 `ls` 不能绕过 read policy，列表和搜索结果不能泄露 denied entries。
 
-每个 sandboxed command 在进程退出后都必须调用 `cleanupAfterCommand()`。Linux 下 bubblewrap 在保护不存在的 denied path 时可能在 host 上创建空白 mount point 文件，例如 `.claude`；这个 cleanup 是必要的。
+每个 sandboxed command 在进程退出后都必须调用 `SandboxManager.cleanupAfterCommand()`。Linux 下 bubblewrap 在保护不存在的 denied path 时可能在 host 上创建空白 mount point 文件，例如 `.claude`；这个 cleanup 是必要的。目前通过 `SandboxSession.prepareCommand()` 返回的 `finish()` 方法统一触发 cleanup，`finish()` 还负责释放生命周期读锁。
+
+`SandboxSession` 使用读写锁（`AsyncRwLock`）管理生命周期：`initialize()` 和 `reset()` 获取写锁，`prepareCommand()` 获取读锁。这保证 init/reset 不会与正在执行的 sandboxed command 并发，且 `reset()` 会等待所有活跃命令完成后才执行。
 
 命令构造、沙盒包装和进程 spawn 应保持分离。优先使用 `sandbox-runtime` 提供的 argv wrapping，而不是 raw shell string。可以为用户 bash command 使用临时脚本，但临时脚本生命周期必须封闭在单次执行内。
 
@@ -46,7 +48,9 @@ Reviewer approval 集成在 sandbox plugin 内，只为 explicit bypass 行为�
 
 Reviewer 使用 Pi child session 时必须隔离项目上下文：不写项目 session，不加载项目 extensions、skills 或 resources。
 
-Reviewer 可以使用 sandboxed `bash` 和只读取证工具，但这些工具必须经过 guard adapter，并受同一份或更严格的 policy 约束。Reviewer 不得拥有 write、edit 或 bypass 能力；reviewer sandbox 的写权限必须比 parent 更窄，默认不允许写入。
+Reviewer 可以使用 sandboxed `bash` 和只读取证工具，但这些工具必须经过 guard adapter，并受同一份或更严格的 policy 约束。Reviewer 不得拥有 write、edit 或 bypass 能力。Reviewer 共享 parent `SandboxSession`，但每次命令执行时通过 per-command sandbox config 剥离 `allowWrite`，确保 reviewer 实际不可写。
+
+Reviewer 超时通过 `AbortController` 传播：`withTimeout()` 在超时时创建 `AbortController` 并 `abort()`，信号传递到 `ReviewBackend.review()`，触发 `session.abort()` 取消子 session。Reviewer 工具也合并此信号，确保超时后工具立即中止。
 
 Reviewer 输入中的 transcript、tool arguments、tool results 和 planned action 都是不可信证据，不是指令。Reviewer 输出必须结构化，至少包含 allow/deny outcome 和 rationale；优先使用 terminating decision tool，而不是依赖 free-form JSON。
 

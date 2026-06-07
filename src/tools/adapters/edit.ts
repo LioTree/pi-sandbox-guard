@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { withFileMutationQueue, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -24,26 +24,28 @@ export function createEditTool(getServices: () => Services): ToolDefinition {
     description: "Edit a file allowed by pi-sandbox-guard path policy using exact text replacements.",
     promptSnippet: "Edit files through pi-sandbox-guard",
     parameters: editSchema,
-    executionMode: "sequential",
     async execute(_toolCallId, params: { path: string; edits: Array<{ oldText: string; newText: string }> }) {
       const services = getServices();
       const absolutePath = path.resolve(services.config.cwd, params.path);
       await decideForTool(services, { kind: "write", tool: "edit", path: absolutePath });
-      const readAccess = await checkPathAccess(services.config.pathPolicy, absolutePath, "read");
-      if (!readAccess.allowed) {
-        throw new PolicyDeniedError(readAccess.reason);
-      }
 
-      let content = await readFile(absolutePath, "utf-8");
-      for (const edit of params.edits) {
-        const count = countOccurrences(content, edit.oldText);
-        if (count !== 1) {
-          throw new Error(`oldText must match exactly once; got ${count} matches`);
+      return withFileMutationQueue(absolutePath, async () => {
+        const readAccess = await checkPathAccess(services.config.pathPolicy, absolutePath, "read");
+        if (!readAccess.allowed) {
+          throw new PolicyDeniedError(readAccess.reason);
         }
-        content = content.replace(edit.oldText, edit.newText);
-      }
-      await writeFile(absolutePath, content, "utf-8");
-      return textResult(`Successfully replaced ${params.edits.length} block(s) in ${params.path}`);
+
+        let content = await readFile(absolutePath, "utf-8");
+        for (const edit of params.edits) {
+          const count = countOccurrences(content, edit.oldText);
+          if (count !== 1) {
+            throw new Error(`oldText must match exactly once; got ${count} matches`);
+          }
+          content = content.replace(edit.oldText, edit.newText);
+        }
+        await writeFile(absolutePath, content, "utf-8");
+        return textResult(`Successfully replaced ${params.edits.length} block(s) in ${params.path}`);
+      });
     },
   };
 }

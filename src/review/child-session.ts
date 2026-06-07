@@ -1,10 +1,12 @@
 import {
   createAgentSession,
   DefaultResourceLoader,
+  type AgentSession,
   SessionManager,
   SettingsManager,
   type CreateAgentSessionOptions,
   type ExtensionContext,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import type { ReviewBackend, ReviewRequest } from "./service";
@@ -12,7 +14,6 @@ import { buildReviewPrompt } from "./prompt";
 import { collectTranscriptEvidence } from "./evidence";
 import { createReviewDecisionTool } from "./reviewer-tools";
 import { parseReviewDecisionFromText, type ReviewDecision } from "./parse";
-import { SandboxSession } from "../runtime/sandbox-session";
 import { noopAuditSink } from "../audit";
 import type { Services } from "../runtime-state";
 import type { EffectiveConfig } from "../config/effective";
@@ -22,28 +23,22 @@ import { createGrepTool } from "../tools/adapters/grep";
 import { createFindTool } from "../tools/adapters/find";
 import { createLsTool } from "../tools/adapters/ls";
 
-function buildReviewerServices(
+export function buildReviewerServices(
   parentConfig: EffectiveConfig,
-  parentSandbox: SandboxRuntimeConfig,
-  reviewerSandbox: SandboxSession,
+  parentSandbox: Services["sandbox"],
 ): Services {
+  const sandboxRuntime = buildReviewerSandboxConfig(parentConfig.sandboxRuntime);
   const config: EffectiveConfig = {
     ...parentConfig,
     enforcement: {
       ...parentConfig.enforcement,
       bypass: { mode: "deny" },
     },
-    sandboxRuntime: {
-      ...parentSandbox,
-      filesystem: {
-        ...parentSandbox.filesystem,
-        allowWrite: [],
-      },
-    },
+    sandboxRuntime,
   };
   return {
     config,
-    sandbox: reviewerSandbox,
+    sandbox: parentSandbox,
     audit: noopAuditSink,
   };
 }
@@ -65,13 +60,17 @@ function resolveReviewerModel(
 }
 
 export class PiChildSessionReviewBackend implements ReviewBackend {
-  async review(request: ReviewRequest, ctx: ExtensionContext): Promise<ReviewDecision> {
+  async review(request: ReviewRequest, ctx: ExtensionContext, signal?: AbortSignal): Promise<ReviewDecision> {
+    throwIfAborted(signal);
     let recordedDecision: ReviewDecision | undefined;
-    const reviewerSandbox = new SandboxSession();
-    await reviewerSandbox.initialize(buildReviewerSandboxConfig(request.config.sandboxRuntime));
-
-    const services = buildReviewerServices(request.config, request.config.sandboxRuntime, reviewerSandbox);
+    const services = buildReviewerServices(request.config, request.sandbox);
     const getServices = () => services;
+    let session: AgentSession | undefined;
+
+    const abortSession = () => {
+      void session?.abort();
+    };
+    signal?.addEventListener("abort", abortSession, { once: true });
 
     try {
       const settingsManager = SettingsManager.inMemory({
@@ -90,28 +89,33 @@ export class PiChildSessionReviewBackend implements ReviewBackend {
       });
       await resourceLoader.reload();
 
+      throwIfAborted(signal);
       const model = resolveReviewerModel(request.config.reviewer?.model, ctx);
 
-      const { session } = await createAgentSession({
+      const created = await createAgentSession({
         cwd: request.cwd,
         model,
         thinkingLevel: (request.config.reviewer?.thinkingLevel ?? "off") as CreateAgentSessionOptions["thinkingLevel"],
         noTools: "all",
         tools: ["bash", "read", "grep", "find", "ls", "review_decision"],
-        customTools: [
-          createBashTool(getServices),
-          createReadTool(getServices),
-          createGrepTool(getServices),
-          createFindTool(getServices),
-          createLsTool(getServices),
-          createReviewDecisionTool((decision) => {
-            recordedDecision = decision;
-          }),
-        ],
+        customTools: withReviewAbortSignal(
+          [
+            createBashTool(getServices),
+            createReadTool(getServices),
+            createGrepTool(getServices),
+            createFindTool(getServices),
+            createLsTool(getServices),
+            createReviewDecisionTool((decision) => {
+              recordedDecision = decision;
+            }),
+          ],
+          signal,
+        ),
         sessionManager: SessionManager.inMemory(request.cwd),
         settingsManager,
         resourceLoader,
       });
+      session = created.session;
 
       const prompt = buildReviewPrompt({
         command: request.command,
@@ -120,7 +124,13 @@ export class PiChildSessionReviewBackend implements ReviewBackend {
         transcript: collectTranscriptEvidence(ctx, request.config.reviewer?.maxTranscriptChars ?? 12_000),
       });
 
-      await session.prompt(prompt, { expandPromptTemplates: false, source: "extension" });
+      await raceWithAbort(
+        session.prompt(prompt, { expandPromptTemplates: false, source: "extension" }),
+        signal,
+        async () => {
+          await session?.abort();
+        },
+      );
 
       if (recordedDecision) {
         return recordedDecision;
@@ -132,12 +142,13 @@ export class PiChildSessionReviewBackend implements ReviewBackend {
       const text = extractText(lastAssistant?.content);
       return parseReviewDecisionFromText(text);
     } finally {
-      await reviewerSandbox.reset();
+      signal?.removeEventListener("abort", abortSession);
+      session?.dispose();
     }
   }
 }
 
-function buildReviewerSandboxConfig(parent: SandboxRuntimeConfig): SandboxRuntimeConfig {
+export function buildReviewerSandboxConfig(parent: SandboxRuntimeConfig): SandboxRuntimeConfig {
   return {
     ...parent,
     filesystem: {
@@ -145,6 +156,83 @@ function buildReviewerSandboxConfig(parent: SandboxRuntimeConfig): SandboxRuntim
       allowWrite: [],
     },
   };
+}
+
+function withReviewAbortSignal(tools: ToolDefinition[], reviewSignal: AbortSignal | undefined): ToolDefinition[] {
+  if (!reviewSignal) {
+    return tools;
+  }
+  return tools.map((tool) => ({
+    ...tool,
+    execute(toolCallId, params, signal, onUpdate, ctx) {
+      return tool.execute(toolCallId, params, mergeAbortSignals(signal, reviewSignal), onUpdate, ctx);
+    },
+  }));
+}
+
+function mergeAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const activeSignals = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+  if (activeSignals.length === 0) {
+    return undefined;
+  }
+  if (activeSignals.length === 1) {
+    return activeSignals[0];
+  }
+
+  const controller = new AbortController();
+  const abort = (signal: AbortSignal) => {
+    if (!controller.signal.aborted) {
+      controller.abort(signal.reason);
+    }
+  };
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      abort(signal);
+      break;
+    }
+    signal.addEventListener("abort", () => abort(signal), { once: true });
+  }
+  return controller.signal;
+}
+
+async function raceWithAbort<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+  onAbort: () => Promise<void>,
+): Promise<T> {
+  if (!signal) {
+    return promise;
+  }
+  if (signal.aborted) {
+    await onAbort();
+    throw abortError(signal);
+  }
+
+  let removeAbortListener: (() => void) | undefined;
+  const abortPromise = new Promise<never>((_, reject) => {
+    const abort = () => {
+      promise.catch(() => {});
+      void onAbort().finally(() => reject(abortError(signal)));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    removeAbortListener = () => signal.removeEventListener("abort", abort);
+  });
+
+  try {
+    return await Promise.race([promise, abortPromise]);
+  } finally {
+    removeAbortListener?.();
+  }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw abortError(signal);
+  }
+}
+
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error("reviewer aborted");
 }
 
 function extractText(content: unknown): string {
