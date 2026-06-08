@@ -38,6 +38,9 @@
         "~/.codex",
         "~/.pi"
       ],
+      "allowRead": [
+        "~/.pi/agent/git"
+      ],
       "allowWrite": ["."],
       "denyWrite": [
         "**/.git",
@@ -70,7 +73,9 @@
 | `~/.claude` | Claude Code 全局 settings（`settings.json`、`CLAUDE.md` 等） |
 | `~/.claude.json` | Claude Code OAuth token 和 MCP 配置（独立文件，`~/.claude` 目录前缀无法覆盖） |
 | `~/.codex` | Codex 全局配置目录 |
-| `~/.pi` | Pi 全局配置目录，包含 `agent/auth.json`（存有 25+ provider 的 API key 和 OAuth token，文件权限 `0600`） |
+| `~/.pi` | Pi 全局配置目录，包含 `agent/auth.json`（存有 25+ provider 的 API key 和 OAuth token，文件权限 `0600`）。通过 `allowRead: ["~/.pi/agent/git"]` 开窗允许读取扩展源码，避免遮挡 Linux sandbox 自身的 `apply-seccomp` 二进制 |
+
+> **为什么需要 `allowRead: ["~/.pi/agent/git"]`**：Linux 下 sandbox-runtime 的 `apply-seccomp` 二进制位于本地 `node_modules` 中。当项目通过 git clone 安装在 `~/.pi/agent/git/` 下时，`denyRead: ["~/.pi"]` 会将整个 `~/.pi` 挂载 tmpfs，导致该二进制在沙箱内不可见，Unix socket 过滤失效（exit code 127）。
 
 > **关于 `**/.env` 的作用范围**：`**/.env` 只匹配 `<cwd>` 目录树内的 `.env`（如 `/repo/.env`、`/repo/app/.env`），不覆盖 `/other-project/.env`。因为相对路径规则先相对于 `cwd` 解析，且 Linux sandbox 后端不支持 `/**/.env` 这类从根开始的 glob（macOS 支持较好）。对“任意项目中禁止读 `.env`”这个目标，当前推荐配置不构成跨平台保证。
 
@@ -170,6 +175,9 @@
         "~/.claude.json",
         "~/.codex",
         "~/.pi"
+      ],
+      "allowRead": [
+        "~/.pi/agent/git"
       ],
       "allowWrite": ["."],
       "denyWrite": [
