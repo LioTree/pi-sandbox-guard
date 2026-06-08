@@ -1,4 +1,8 @@
-# pi-sandbox-guard 配置
+# pi-sandbox-guard 配置参考
+
+本文是配置格式和安全语义参考。按平台可直接复制的推荐配置见 [recommended-config.md](recommended-config.md)。
+
+## 配置查找
 
 配置使用 single-config 模型，不合并项目配置和全局配置。
 
@@ -7,16 +11,9 @@
 1. `<cwd>/.pi/sandbox-guard.json`
 2. `~/.pi/agent/sandbox-guard.json`
 
-如果两者都不存在，插件禁用且不接管 Pi 内置工具。
+如果两者都不存在，插件禁用且不接管 Pi 内置工具。项目配置存在但非法时 fail closed，不回退到全局配置。
 
-## 推荐配置
-
-以下配置针对**中转站投毒**威胁模型：恶意节点在 agent 工具调用回包中注入 `write`/`bash` 操作，向项目写入可执行文件或修改工具配置，后续开发者在 host 上运行时触发逃逸。
-
-核心思路：
-
-- **读权限**：阻止 agent 窃取 API key 和凭证文件。
-- **写权限**：在 `allowWrite: ["."]` 区域内排除各工具的自动执行入口，阻止投毒节点写入可自动加载的代码。
+## 基本结构
 
 ```json
 {
@@ -27,29 +24,10 @@
       "deniedDomains": []
     },
     "filesystem": {
-      "denyRead": [
-        "**/.env",
-        "~/.ssh",
-        "~/.aws",
-        "~/.gnupg",
-        "~/.config/opencode",
-        "~/.claude",
-        "~/.claude.json",
-        "~/.codex",
-        "~/.pi"
-      ],
-      "allowRead": [
-        "~/.pi/agent/git"
-      ],
+      "denyRead": [],
+      "allowRead": [],
       "allowWrite": ["."],
-      "denyWrite": [
-        "**/.git",
-        "**/.claude",
-        "**/.codex",
-        "**/.opencode",
-        "**/.pi",
-        "**/opencode.json"
-      ]
+      "denyWrite": []
     }
   },
   "enforcement": {
@@ -61,48 +39,131 @@
 }
 ```
 
-### denyRead 说明
+规则：
 
-| 路径 | 目的 |
+- `sandbox` 直接表达传给 Anthropic `sandbox-runtime` 的安全配置。
+- `sandbox.filesystem` 是文件系统权限的唯一权威来源，同时 compile 成内部 path policy。
+- `enforcement.tools` 必须显式列出要接管的工具。
+- 不支持隐式默认 allow/deny list。
+- 不支持项目配置和全局配置 deep merge。
+
+## 统一 policy 流程
+
+所有工具调用先规范化为 capability request，再由 policy 作唯一决策：
+
+```text
+config -> validate -> compile -> capability request -> policy decision -> execute or deny
+```
+
+决策类型：
+
+| 决策 | 作用 |
 |------|------|
-| `**/.env` | 当前工作目录下任意深度的 `.env` 文件（API key、数据库密码等） |
-| `~/.ssh` | SSH 私钥，前缀匹配覆盖 `~/.ssh/` 下所有文件 |
-| `~/.aws` | AWS credentials（`~/.aws/credentials` 等） |
-| `~/.gnupg` | GPG 私钥 |
-| `~/.config/opencode` | OpenCode 全局配置目录（`opencode.json` 可含 API key） |
-| `~/.claude` | Claude Code 全局 settings（`settings.json`、`CLAUDE.md` 等） |
-| `~/.claude.json` | Claude Code OAuth token 和 MCP 配置（独立文件，`~/.claude` 前缀无法覆盖） |
-| `~/.codex` | Codex 全局配置目录 |
-| `~/.pi` | Pi 全局配置目录，含 `agent/auth.json`（25+ provider 的 API key/OAuth token，文件 `0600`）。`allowRead: ["~/.pi/agent/git"]` 除外开窗 |
+| `deny` | 拒绝执行 |
+| `native` | 允许 adapter 通过受控 native 文件系统操作执行 |
+| `sandboxed` | 允许 `bash` 通过 `sandbox-runtime` 执行 |
+| `review` | explicit bypass 进入 reviewer |
 
-> **为什么需要 `allowRead: ["~/.pi/agent/git"]`**：Linux 下 sandbox-runtime 的 `apply-seccomp` 二进制位于本地 `node_modules` 中。当项目通过 git clone 安装在 `~/.pi/agent/git/` 下时，`denyRead: ["~/.pi"]` 会将整个 `~/.pi` 挂载 tmpfs，导致该二进制在沙箱内不可见，Unix socket 过滤失效（exit code 127）。
+`bash` 默认走 sandboxed execution。只有显式 `bypassSandbox: true` 才可能进入 reviewer；不会直接放行。
 
-> **关于 `**/.env` 的作用范围**：`**/.env` 只匹配 `<cwd>` 目录树内的 `.env`（如 `/repo/.env`、`/repo/app/.env`），不覆盖 `/other-project/.env`。因为相对路径规则先相对于 `cwd` 解析，且 Linux sandbox 后端不支持 `/**/.env` 这类从根开始的 glob（macOS 支持较好）。对“任意项目中禁止读 `.env`”这个目标，当前推荐配置不构成跨平台保证。
+## 路径语法和平台差异
 
-> 如需更广覆盖，可显式添加如 `~/code/**/.env`、`~/work/**/.env` 等规则。
+路径可以是绝对路径、相对 cwd 的路径，或 `~` 开头的 home 路径。
 
-### denyWrite 说明
+同一份 `sandbox.filesystem` 会被两个执行层消费：
 
-写权限默认全关（`allowWrite: ["."]` 只开放 cwd）。`denyWrite` 在 cwd 区域内做二次排除：
+1. pi-sandbox-guard 内部 path policy，用于 native 文件工具和 adapter 预检查。
+2. `sandbox-runtime` 后端，用于 sandboxed `bash` 中的进程。
 
-| 路径 | 目的 |
+两者的 glob 表达能力不是完全一致的：
+
+| 场景 | `**/` glob 支持 | 说明 |
+|------|------------------|------|
+| pi-sandbox-guard path policy | 支持 | `write` / `edit` 等 native 路径检查会匹配目标及其 ancestor。`**/.claude` 可拦 `.claude/note.txt`。 |
+| macOS sandboxed `bash` | 支持 | `sandbox-runtime` 使用 Seatbelt profile，将 glob 转为 regex，运行时匹配新建路径。目录型 deny 建议写 `**/dir` 和 `**/dir/**` 两条。 |
+| Linux sandboxed `bash` | 写规则仅可靠支持 literal path | Linux 后端是 bubblewrap mount namespace。`allowWrite` / `denyWrite` 中的普通 glob 会被过滤或不能完整表达；不要把 `**/.claude` 当作 Linux bash 的递归保护。 |
+
+> Linux 下 `denyRead` glob 会由 `sandbox-runtime` 尝试展开为已存在路径，但这不是运行时 glob，也不能保护命令执行中新建的匹配路径。
+
+## 读权限
+
+读操作的权限模型是“默认全开 + deny 排除”：
+
+| 规则 | 作用 |
 |------|------|
-| `**/.git` | 阻止写入 git hooks（`pre-commit`、`post-checkout` 等）。投毒后，开发者在 host 执行 `git` 操作时即触发 shell 逃逸 |
-| `**/.claude` | 阻止写入 Claude Code 项目级 settings/hooks，防止修改权限配置或注入 hook 脚本 |
-| `**/.codex` | 阻止写入 Codex 项目级配置 |
-| `**/.opencode` | **高风险**：阻止写入 `plugins/*.js`。OpenCode 启动时自动加载 `.opencode/plugins/` 中的 JS/TS 文件，插件通过 Bun shell API 可执行任意 host 命令 |
-| `**/.pi` | **高风险**：阻止写入 `extensions/*.ts`。Pi 受信项目启动时自动执行 `.pi/extensions/` 中的 TS/JS 文件（通过 jiti 加载），扩展拥有完整系统权限、可注册 hooks 和自定义 tools |
-| `**/opencode.json` | 阻止写入 OpenCode 项目配置（修改 model/provider/permission 等） |
+| 无规则 | 所有文件可读 |
+| `denyRead` | 关闭指定路径的读权限 |
+| `allowRead` | 在 `denyRead` 区域内开窗 |
 
-所有 `**/` 前缀匹配当前工作目录（含根目录）下任意深度的此文件/目录，涵盖子模块、worktree 等。
+优先级：`allowRead` > `denyRead`。一条路径只有在命中 `denyRead` 且未命中 `allowRead` 时才被拒绝。
 
-### 威胁链路
+`allowRead` 不是独立门控。它只在 `denyRead` 内部起作用。这意味着当前模型不能表达“只允许读 cwd”：不设 `denyRead` 就是默认可读；`denyRead: ["/"]` 又会阻断 sandbox 内系统路径，导致命令无法运行。
 
-典型攻击链：恶意中转站注入 `write` → 写入 `.opencode/plugins/backdoor.js` → 开发者下次 `opencode` 时插件自动在 host 执行。`.pi/extensions/` 和 `.git/hooks/` 有相同的自动执行逃逸路径。
+开窗匹配规则：
 
-## 文件系统
+- `denyRead` 父目录 + `allowRead` 子目录：子目录可读。
+- `denyRead` 文件 + `allowRead` 父目录：内部 path policy 可读，但 sandboxed `bash` 未必可读；`sandbox-runtime` 的 mount 语义通常要求 deny 文件和 allow 文件精确同名才能 override。
 
-`sandbox.filesystem` 同时 compile 成内部 path policy，约束所有 native 工具和 reviewer 工具的文件访问。没有单独的工具级权限配置。
+### 读权限已知限制
+
+- Linux `denyRead` 对尚不存在的路径不生效。
+- Linux `denyRead` glob 只能展开当前已存在的匹配路径。
+- 不建议在推荐配置中粗暴 `denyRead: ["~/.pi"]`。这会遮蔽 `~/.pi/agent/git` 下通过 git 安装的插件源码和 `sandbox-runtime` helper，并且当 cwd 位于 `~/.pi/agent/git/...` 时可能把可写工作区压成只读，导致 bwrap 在创建 `.gitconfig` 等保护 mount point 时失败。
+
+## 写权限
+
+写操作的权限模型是“默认全关 + allow 开放”：
+
+| 规则 | 作用 |
+|------|------|
+| 无规则 | 不可写 |
+| `allowWrite` | 开放指定路径的写权限 |
+| `denyWrite` | 在 `allowWrite` 区域内再排除 |
+
+优先级：先过 `allowWrite` 门，再被 `denyWrite` 排除。一条路径必须命中 `allowWrite` 且未命中 `denyWrite` 才可写。
+
+### 目录型 deny 规则
+
+为了同时保护目录节点本身和目录内容，跨后端推荐写成两条：
+
+```json
+"denyWrite": [
+  "**/.claude",
+  "**/.claude/**"
+]
+```
+
+含义：
+
+- `**/.claude`：保护名为 `.claude` 的目录/文件节点本身，防创建、替换、删除、rename 到该路径。
+- `**/.claude/**`：保护 `.claude` 下的所有内容。
+
+pi-sandbox-guard 内部 path policy 会检查 ancestor，所以 native `write/edit` 中 `**/.claude` 本身就能拦 `.claude/note.txt`；但 macOS Seatbelt regex 是路径精确匹配风格，目录内容仍应显式写 `/**`。Linux sandboxed `bash` 不应依赖 glob write 规则。
+
+### Linux bash 写规则注意事项
+
+Linux `sandbox-runtime` 使用 bubblewrap bind mount 实现写限制。它只能可靠挂载具体路径：
+
+- `denyWrite: [".claude"]`：可保护 cwd 根下 `.claude`。
+- `denyWrite: ["packages/a/.claude"]`：可保护该具体子目录。
+- `denyWrite: ["**/.claude"]`：不要视为 Linux sandboxed `bash` 的可靠保护。
+
+如果需要 Linux 下递归保护 sandboxed `bash` 写入，必须使用额外机制，例如预展开已有目录、overlay transaction、AppArmor 后端，或限制 `bash` 写权限。当前推荐配置选择 literal path，避免虚假的递归安全承诺。
+
+### 写权限已知限制
+
+- Linux `denyWrite` 对 glob 的支持受 bubblewrap 限制。普通 `**/` 不构成可靠保护。
+- Linux `denyRead` 与 `denyWrite` 同一路径冲突时，`denyRead` 的 tmpfs 可能覆盖写保护。这是上游 `sandbox-runtime`/bubblewrap 组合的已知限制。
+- `denyWrite: [".git"]` 可保护整个 cwd 根 `.git`，但会阻止正常 `git add` / `git commit`。若目标是允许正常 git 操作但阻止 hook/config 投毒，应保护 `.git/hooks` 和 `.git/config`，而不是整个 `.git`。
+
+## 网络
+
+`allowedDomains` 和 `deniedDomains` 控制 sandboxed `bash` 内进程的网络访问：
+
+- `allowedDomains: []`：阻断所有网络请求。网络代理仍会启动，但白名单为空意味着没有任何域名被放行。
+- `deniedDomains: []`：无额外拒绝。
+
+网络规则不影响 native `read/write/edit` 这类文件工具。
 
 ## 工具输出限制
 
@@ -119,88 +180,19 @@
 
 `bash` 输出被截断时，返回给模型的是尾部内容，并附带 `Full output: <path>`。完整输出文件由插件 host 进程写入，权限为 `0600`；audit event 只记录结构化元数据，不记录输出内容。
 
-### 读权限：默认全开 + deny 排除
-
-读操作（`read`、`grep`、`find`、`ls`）的权限模型：
-
-| 规则 | 作用 |
-|------|------|
-| (无规则) | 所有文件可读 |
-| `denyRead` | 关闭指定路径的读权限 |
-| `allowRead` | 在 `denyRead` 区域内开窗 |
-
-**优先级**：`allowRead` > `denyRead`。一条路径只有在命中 `denyRead` **且**未命中 `allowRead` 时才被拒绝。
-
-`allowRead` **不是独立门控**——它只在 `denyRead` 内部起作用。这意味着无法表达"只允许读当前工作目录"：因为读默认全开，不设 `denyRead` 就等于放行所有路径，而 `denyRead: ["/"]` 会阻断 sandbox 内系统路径导致无法执行任何命令。没有真正的"只读 cwd"白名单——当前模型只能做"默认可读 + `denyRead` 排除敏感路径"的 hardening。
-
-**开窗匹配规则**：
-- `denyRead` 父目录 + `allowRead` 子目录 → 子目录可读（前缀匹配）
-- `denyRead` 文件 + `allowRead` 父目录 → native 工具可读，但 **sandbox 内进程仍不可读**（sandbox-runtime mount 要求 deny 文件和 allow 父目录精确同名路径才 override）
-
-> **注意**：`allowRead` 父目录开窗对 sandbox 内二进制不生效。这意味着 reviewer sandboxed bash 的 `read`/`grep` 等工具会受到此限制；native 工具（`read`、`write`、`edit` 的 adapter）不受影响。
-
-### 写权限：默认全关 + allow 开放
-
-写操作（`write`、`edit`）的权限模型：
-
-| 规则 | 作用 |
-|------|------|
-| (无规则) | 不可写 |
-| `allowWrite` | 开放指定路径的写权限 |
-| `denyWrite` | 在 `allowWrite` 区域内再排除 |
-
-**优先级**：先过 `allowWrite` 门，再被 `denyWrite` 排除。一条路径必须命中 `allowWrite` 且未命中 `denyWrite` 才可写。
-
-### 已知限制
-
-- **`denyRead` 对尚不存在的路径不生效**：sandbox-runtime 的 mount 实现仅对 host 上已存在的路径做保护。沙箱进程如果在 `allowWrite` 区域内创建了一个被列入 `denyRead` 的新文件或目录，它将是可读的。
-- **`denyRead` 与 `denyWrite` 冲突**：sandbox-runtime 用 tmpfs 实现 `denyRead`，该挂载为可读写，会覆盖 `denyWrite` 对同一路径的写保护。**同一路径同时出现在 `denyRead` 和 `denyWrite` 中时，agent 可以写入此路径。**（已知上游 bug）
-
-## 网络
-
-`allowedDomains` 和 `deniedDomains` 控制沙箱内进程的网络访问：
-
-- `allowedDomains: []`（空数组）：**阻断所有网络请求**。网络代理仍会启动，但白名单为空意味着没有任何域名被放行。
-- `deniedDomains: []`：无额外拒绝。
-
 ## Reviewer Bypass
 
-如果允许 explicit bypass 进入 LLM reviewer，必须显式配置 reviewer。完整配置如下：
+`bypassSandbox: true` 不会直接放行。`enforcement.bypass.mode` 控制 explicit bypass 行为：
+
+| mode | 行为 |
+|------|------|
+| `deny` | explicit bypass 总是拒绝 |
+| `review` | 进入 reviewer；reviewer 超时、报错、拒绝或输出非法都会 deny |
+
+开启 reviewer 时必须显式配置：
 
 ```json
 {
-  "enabled": true,
-  "sandbox": {
-    "network": {
-      "allowedDomains": [],
-      "deniedDomains": []
-    },
-    "filesystem": {
-      "denyRead": [
-        "**/.env",
-        "~/.ssh",
-        "~/.aws",
-        "~/.gnupg",
-        "~/.config/opencode",
-        "~/.claude",
-        "~/.claude.json",
-        "~/.codex",
-        "~/.pi"
-      ],
-      "allowRead": [
-        "~/.pi/agent/git"
-      ],
-      "allowWrite": ["."],
-      "denyWrite": [
-        "**/.git",
-        "**/.claude",
-        "**/.codex",
-        "**/.opencode",
-        "**/.pi",
-        "**/opencode.json"
-      ]
-    }
-  },
   "enforcement": {
     "tools": ["bash", "read", "write", "edit", "grep", "find", "ls"],
     "bypass": {
@@ -217,22 +209,16 @@
 }
 ```
 
-`bypassSandbox: true` 不会直接放行。`mode: "review"` 时 reviewer 超时、报错、拒绝或输出非法都会 deny；`mode: "deny"` 时 explicit bypass 总是 deny。
+`reviewer` 字段：
 
-`reviewer` 字段说明：
 - `enabled`：必填，是否启用 reviewer。
-- `timeoutMs`：必填，reviewer 超时时间（毫秒）。超时 → fail closed → deny。
+- `timeoutMs`：必填，reviewer 超时时间（毫秒）。超时会 fail closed。
 - `maxTranscriptTokens`：必填，传给 reviewer 的最大会话长度（近似 token 数，按 chars/4 估算）。
 - `model`：可选，审批所用模型，格式 `provider/modelId`。不填则复用父 session 的模型。
-- `thinkingLevel`：可选，思考强度，取值 `off` / `minimal` / `low` / `medium` / `high` / `xhigh`。不填默认 `off`。
+- `thinkingLevel`：可选，取值 `off` / `minimal` / `low` / `medium` / `high` / `xhigh`。不填默认 `off`。
 
-Reviewer 子 session 的工具（read、grep 等）复用同一份 `sandbox.filesystem` path policy，不会获得比父 session 更宽的读取权限。
+Reviewer 子 session 的工具复用同一份或更严格的 `sandbox.filesystem` policy，不会获得比父 session 更宽的读取权限，不具备 write/edit 或 bypass 能力。
 
-## 规则
+## 推荐配置
 
-- `sandbox` 直接表达传给 Anthropic `sandbox-runtime` 的安全配置。
-- `sandbox.filesystem` 是文件系统权限的**唯一权威来源**——所有工具读/写/搜索/列表都回到同一份 path policy。
-- `enforcement.tools` 必须显式列出要接管的工具。
-- 不支持隐式默认 allow/deny list。
-- 不支持项目配置和全局配置 deep merge。
-- Reviewer 必须 fail closed：超时、异常、输出非法或拒绝时都不能放行。
+按平台区分的推荐配置见 [recommended-config.md](recommended-config.md)。

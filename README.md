@@ -20,7 +20,7 @@
 1. `<cwd>/.pi/sandbox-guard.json`
 2. `~/.pi/agent/sandbox-guard.json`
 
-最小配置、完整配置参考、文件系统语义、reviewer 模式以及已知的 `sandbox-runtime` 限制见 [docs/config.md](docs/config.md)。
+完整配置参考、文件系统语义、reviewer 模式以及已知的 `sandbox-runtime` 限制见 [docs/config.md](docs/config.md)。按平台区分的推荐配置见 [docs/recommended-config.md](docs/recommended-config.md)。
 
 ## 开发
 
@@ -36,6 +36,7 @@ npm run test:integration
 ## 文档
 
 - [docs/config.md](docs/config.md)：面向用户的配置参考。
+- [docs/recommended-config.md](docs/recommended-config.md)：Linux/macOS 推荐配置和差异说明。
 - [docs/architecture.md](docs/architecture.md)：长期安全边界和子系统边界。
 - [docs/testing.md](docs/testing.md)：测试策略与验收期望。
 - [AGENTS.md](AGENTS.md)：用于安全维护此仓库的 coding-agent 指令。
