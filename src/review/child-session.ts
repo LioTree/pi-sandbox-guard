@@ -121,7 +121,7 @@ export class PiChildSessionReviewBackend implements ReviewBackend {
         command: request.command,
         cwd: request.cwd,
         config: request.config,
-        transcript: collectTranscriptEvidence(ctx, request.config.reviewer?.maxTranscriptChars ?? 12_000),
+        transcript: collectTranscriptEvidence(ctx, request.config.reviewer?.maxTranscriptTokens ?? 20_000),
       });
 
       await raceWithAbort(

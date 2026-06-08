@@ -87,7 +87,7 @@ describe("policy decision", () => {
           tools: ["bash"],
           bypass: { mode: "review" },
         },
-        reviewer: { enabled: true, timeoutMs: 1_000, maxTranscriptChars: 1_000 },
+        reviewer: { enabled: true, timeoutMs: 1_000, maxTranscriptTokens: 1_000 },
       },
       path.join(root, ".pi", "sandbox-guard.json"),
       root,

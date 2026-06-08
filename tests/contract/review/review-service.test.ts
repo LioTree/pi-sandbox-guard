@@ -20,7 +20,7 @@ describe("ReviewService", () => {
     const root = await mkdtemp(path.join(tmpdir(), "psg-review-"));
     const config = effectiveConfig(root, {
       enforcement: { tools: ["bash"], bypass: { mode: "review" } },
-      reviewer: { enabled: true, timeoutMs: 1_000, maxTranscriptChars: 1_000 },
+      reviewer: { enabled: true, timeoutMs: 1_000, maxTranscriptTokens: 1_000 },
     });
     const service = new ReviewService(backendReturning({ outcome: "allow", rationale: "ok" }));
 
@@ -34,7 +34,7 @@ describe("ReviewService", () => {
     const root = await mkdtemp(path.join(tmpdir(), "psg-review-"));
     const config = effectiveConfig(root, {
       enforcement: { tools: ["bash"], bypass: { mode: "review" } },
-      reviewer: { enabled: true, timeoutMs: 1_000, maxTranscriptChars: 1_000 },
+      reviewer: { enabled: true, timeoutMs: 1_000, maxTranscriptTokens: 1_000 },
     });
     const service = new ReviewService(backendReturning({ outcome: "deny", rationale: "too risky" }));
 
@@ -47,7 +47,7 @@ describe("ReviewService", () => {
     const root = await mkdtemp(path.join(tmpdir(), "psg-review-"));
     const config = effectiveConfig(root, {
       enforcement: { tools: ["bash"], bypass: { mode: "review" } },
-      reviewer: { enabled: true, timeoutMs: 1_000, maxTranscriptChars: 1_000 },
+      reviewer: { enabled: true, timeoutMs: 1_000, maxTranscriptTokens: 1_000 },
     });
     const service = new ReviewService({
       async review() {
@@ -64,7 +64,7 @@ describe("ReviewService", () => {
     const root = await mkdtemp(path.join(tmpdir(), "psg-review-"));
     const config = effectiveConfig(root, {
       enforcement: { tools: ["bash"], bypass: { mode: "review" } },
-      reviewer: { enabled: true, timeoutMs: 1, maxTranscriptChars: 1_000 },
+      reviewer: { enabled: true, timeoutMs: 1, maxTranscriptTokens: 1_000 },
     });
     const service = new ReviewService({
       async review() {
@@ -82,7 +82,7 @@ describe("ReviewService", () => {
     const root = await mkdtemp(path.join(tmpdir(), "psg-review-"));
     const config = effectiveConfig(root, {
       enforcement: { tools: ["bash"], bypass: { mode: "review" } },
-      reviewer: { enabled: true, timeoutMs: 1, maxTranscriptChars: 1_000 },
+      reviewer: { enabled: true, timeoutMs: 1, maxTranscriptTokens: 1_000 },
     });
     let backendSignal: AbortSignal | undefined;
     const service = new ReviewService({

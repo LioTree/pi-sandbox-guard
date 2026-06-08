@@ -193,7 +193,7 @@
     "model": "deepseek/deepseek-v4-flash",
     "thinkingLevel": "off",
     "timeoutMs": 30000,
-    "maxTranscriptChars": 12000
+    "maxTranscriptTokens": 20000
   }
 }
 ```
@@ -203,7 +203,7 @@
 `reviewer` 字段说明：
 - `enabled`：必填，是否启用 reviewer。
 - `timeoutMs`：必填，reviewer 超时时间（毫秒）。超时 → fail closed → deny。
-- `maxTranscriptChars`：必填，传给 reviewer 的最大会话长度（字符数）。
+- `maxTranscriptTokens`：必填，传给 reviewer 的最大会话长度（近似 token 数，按 chars/4 估算）。
 - `model`：可选，审批所用模型，格式 `provider/modelId`。不填则复用父 session 的模型。
 - `thinkingLevel`：可选，思考强度，取值 `off` / `minimal` / `low` / `medium` / `high` / `xhigh`。不填默认 `off`。
 

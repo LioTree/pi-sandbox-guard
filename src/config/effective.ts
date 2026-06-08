@@ -17,7 +17,7 @@ export type EnforcementConfig = {
 export type ReviewerConfig = {
   enabled: boolean;
   timeoutMs: number;
-  maxTranscriptChars: number;
+  maxTranscriptTokens: number;
   model?: string;
   thinkingLevel?: string;
 };

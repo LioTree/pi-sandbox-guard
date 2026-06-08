@@ -42,10 +42,10 @@ function parseReviewerConfig(value: unknown): RawGuardConfig["reviewer"] {
   const reviewer = requireRecord(value, "reviewer");
   const enabled = requireBoolean(reviewer.enabled, "reviewer.enabled");
   const timeoutMs = requirePositiveInteger(reviewer.timeoutMs, "reviewer.timeoutMs");
-  const maxTranscriptChars = requirePositiveInteger(reviewer.maxTranscriptChars, "reviewer.maxTranscriptChars");
+  const maxTranscriptTokens = requirePositiveInteger(reviewer.maxTranscriptTokens, "reviewer.maxTranscriptTokens");
   const model = parseOptionalString(reviewer.model, "reviewer.model");
   const thinkingLevel = parseOptionalThinkingLevel(reviewer.thinkingLevel, "reviewer.thinkingLevel");
-  return { enabled, timeoutMs, maxTranscriptChars, model, thinkingLevel };
+  return { enabled, timeoutMs, maxTranscriptTokens, model, thinkingLevel };
 }
 
 function parseSandboxRuntimeConfig(value: unknown, field: string): SandboxRuntimeConfig {

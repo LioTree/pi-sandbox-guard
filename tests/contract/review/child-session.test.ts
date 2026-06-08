@@ -12,7 +12,7 @@ describe("review child session services", () => {
     const parentSandbox = new SandboxSession(fakeSandboxManager());
     const config = effectiveConfig(root, {
       enforcement: { tools: ["bash", "read", "grep", "find", "ls"], bypass: { mode: "review" } },
-      reviewer: { enabled: true, timeoutMs: 1_000, maxTranscriptChars: 1_000 },
+      reviewer: { enabled: true, timeoutMs: 1_000, maxTranscriptTokens: 1_000 },
     });
 
     const services = buildReviewerServices(config, parentSandbox);
