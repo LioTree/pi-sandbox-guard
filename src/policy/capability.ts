@@ -1,6 +1,6 @@
 import type { BuiltinToolName } from "../config/effective";
 
-export type ReadToolName = "read" | "grep" | "find" | "ls";
+export type ReadToolName = "read" | "edit" | "grep" | "find" | "ls";
 export type WriteToolName = "write" | "edit";
 
 export type CapabilityRequest =

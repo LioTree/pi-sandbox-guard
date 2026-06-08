@@ -1,7 +1,9 @@
 import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { formatSize, type BashToolDetails } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ReviewDeniedError } from "../../errors";
 import type { Services } from "../../runtime-state";
+import { OutputAccumulator, type OutputSnapshot } from "../../runtime/output-accumulator";
 import { runNativeCommand, runSandboxedCommand } from "../../runtime/command-runner";
 import { decideForTool, getToolCwd, textResult } from "../tool-context";
 
@@ -29,23 +31,69 @@ export function createBashTool(getServices: () => Services): ToolDefinition {
         bypass: params.bypassSandbox === true,
       });
 
-      const onData = (data: Buffer) => {
-        onUpdate?.({ content: [{ type: "text", text: data.toString() }], details: undefined });
+      const output = new OutputAccumulator({
+        maxLines: services.config.toolOutput.maxLines,
+        maxBytes: services.config.toolOutput.maxBytes,
+        fullOutputDir: services.config.toolOutput.fullOutputDir,
+        tempFilePrefix: "pi-sandbox-guard-bash",
+      });
+
+      const emitUpdate = () => {
+        if (!onUpdate) return;
+        const snapshot = output.snapshot({ persistIfTruncated: true });
+        onUpdate({
+          content: [{ type: "text", text: snapshot.content }],
+          details: bashDetails(snapshot),
+        });
       };
 
-      const result =
-        decision.kind === "review"
-          ? await runReviewedNativeCommand(services, params.command, cwd, params.timeout, signal, onData, ctx)
-          : await runSandboxedCommand(
-              services.sandbox,
-              params.command,
-              { cwd, timeout: params.timeout, signal, onData, sandboxConfig: services.config.sandboxRuntime },
-              services.audit,
-            );
+      const onData = (data: Buffer) => {
+        output.append(data);
+        emitUpdate();
+      };
 
-      const output = [result.stdout, result.stderr].filter(Boolean).join("");
-      const suffix = result.exitCode === 0 ? "" : `\n[exit code: ${result.exitCode}]`;
-      return textResult((output || "(no output)") + suffix, { exitCode: result.exitCode });
+      const finishOutput = async () => {
+        output.finish();
+        emitUpdate();
+        const snapshot = output.snapshot({ persistIfTruncated: true });
+        await output.closeTempFile();
+        return snapshot;
+      };
+
+      let exitCode: number | null;
+      try {
+        const result =
+          decision.kind === "review"
+            ? await runReviewedNativeCommand(services, params.command, cwd, params.timeout, signal, onData, ctx)
+            : await runSandboxedCommand(
+                services.sandbox,
+                params.command,
+                {
+                  cwd,
+                  timeout: params.timeout,
+                  signal,
+                  onData,
+                  sandboxConfig: services.config.sandboxRuntime,
+                  maxCapturedOutputBytes: services.config.toolOutput.maxBytes,
+                },
+                services.audit,
+              );
+        exitCode = result.exitCode;
+      } catch (error) {
+        const snapshot = await finishOutput();
+        const { text } = formatBashOutput(snapshot, output, services, "");
+        if (error instanceof Error && text) {
+          throw new Error(`${text}\n\n${error.message}`);
+        }
+        throw error;
+      }
+
+      const snapshot = await finishOutput();
+      const { text, details } = formatBashOutput(snapshot, output, services);
+      if (exitCode !== 0 && exitCode !== null) {
+        throw new Error(`${text}\n\nCommand exited with code ${exitCode}`);
+      }
+      return textResult(text, { ...details, exitCode });
     },
   };
 }
@@ -63,5 +111,44 @@ async function runReviewedNativeCommand(
     throw new ReviewDeniedError("reviewer service is unavailable");
   }
   await services.reviewer.review({ command, cwd, config: services.config, sandbox: services.sandbox }, ctx);
-  return runNativeCommand(command, { cwd, timeout, signal, onData });
+  return runNativeCommand(command, {
+    cwd,
+    timeout,
+    signal,
+    onData,
+    maxCapturedOutputBytes: services.config.toolOutput.maxBytes,
+  });
+}
+
+function bashDetails(snapshot: OutputSnapshot): BashToolDetails | undefined {
+  return snapshot.truncation.truncated
+    ? { truncation: snapshot.truncation, fullOutputPath: snapshot.fullOutputPath }
+    : undefined;
+}
+
+function formatBashOutput(
+  snapshot: OutputSnapshot,
+  output: OutputAccumulator,
+  services: Services,
+  emptyText = "(no output)",
+): { text: string; details: BashToolDetails | undefined } {
+  const truncation = snapshot.truncation;
+  let text = snapshot.content || emptyText;
+  const details = bashDetails(snapshot);
+  if (!truncation.truncated) {
+    return { text, details };
+  }
+
+  const startLine = truncation.totalLines - truncation.outputLines + 1;
+  const endLine = truncation.totalLines;
+  const fullOutput = snapshot.fullOutputPath ?? "(full output unavailable)";
+  if (truncation.lastLinePartial) {
+    const lastLineSize = formatSize(output.getLastLineBytes());
+    text += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}). Full output: ${fullOutput}]`;
+  } else if (truncation.truncatedBy === "lines") {
+    text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${fullOutput}]`;
+  } else {
+    text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(services.config.toolOutput.maxBytes)} limit). Full output: ${fullOutput}]`;
+  }
+  return { text, details };
 }

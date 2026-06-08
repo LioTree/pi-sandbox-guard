@@ -47,8 +47,7 @@ Adapter contract 测试不需要真实 Pi session。Pi SDK child session 的行�
 - denied write path 不可写。
 - sandbox-runtime 的 argv wrapping 确实被用于构造 sandboxed command。
 - sandbox violation stderr 会经过 annotation，返回清晰错误信息。
-- command exit 后调用 `cleanupAfterCommand()`（通过 `prepareCommand().finish()`）。
-- 不存在的 denied path 在 command 结束后不会在 host 上留下空白文件，例如 `.claude`。
+- command exit 行为、cleanup 和 mount point 残留见下方 Cleanup 场景。
 - sandbox runtime 初始化失败时插件进入 failed 或 disabled 状态，不能继续放行工具。
 - command spawn、execution 或 cleanup 失败时行为明确，并且默认 fail closed。
 

@@ -9,8 +9,10 @@ import { createFindTool } from "./find";
 import { createLsTool } from "./ls";
 import { createWriteTool } from "./write";
 
-export function createSandboxGuardTools(getServices: () => Services, toolNames: BuiltinToolName[]): ToolDefinition[] {
-  const factories: Record<BuiltinToolName, () => ToolDefinition> = {
+type AnyToolDefinition = ToolDefinition<any, any, any>;
+
+export function createSandboxGuardTools(getServices: () => Services, toolNames: BuiltinToolName[]): AnyToolDefinition[] {
+  const factories: Record<BuiltinToolName, () => AnyToolDefinition> = {
     bash: () => createBashTool(getServices),
     read: () => createReadTool(getServices),
     write: () => createWriteTool(getServices),

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import { appendChunk } from "./process-output";
+import { appendChunk, appendChunkTail } from "./process-output";
 import type { SandboxSession } from "./sandbox-session";
 import { SandboxExecError, errorMessage } from "../errors";
 import type { AuditSink } from "../audit";
@@ -11,6 +11,16 @@ export type CommandRunOptions = {
   signal?: AbortSignal;
   onData?: (data: Buffer) => void;
   sandboxConfig?: Partial<SandboxRuntimeConfig>;
+  maxCapturedOutputBytes?: number;
+};
+
+export type StreamingCommandRunOptions = CommandRunOptions & {
+  onStdout?: (data: Buffer, control: StreamingCommandControl) => void;
+  onStderr?: (data: Buffer, control: StreamingCommandControl) => void;
+};
+
+export type StreamingCommandControl = {
+  stop(): void;
 };
 
 export type CommandRunResult = {
@@ -66,9 +76,49 @@ export async function runNativeCommand(command: string, options: CommandRunOptio
   });
 }
 
+export async function runSandboxedStreamingCommand(
+  sandbox: SandboxSession,
+  command: string,
+  options: StreamingCommandRunOptions,
+  audit?: AuditSink,
+): Promise<CommandRunResult> {
+  let prepared: Awaited<ReturnType<SandboxSession["prepareCommand"]>>;
+  try {
+    prepared = await sandbox.prepareCommand(command, {
+      abortSignal: options.signal,
+      customConfig: options.sandboxConfig,
+    });
+  } catch (error) {
+    throw new SandboxExecError(`failed to wrap command with sandbox: ${errorMessage(error)}`, error);
+  }
+
+  try {
+    const result = await spawnCommand(prepared.argv, {
+      ...options,
+      env: { ...process.env, ...prepared.env },
+    });
+    const annotatedStderr = sandbox.annotateStderr(command, result.stderr);
+    const annotated = annotatedStderr !== result.stderr;
+    if (annotated) {
+      const suffix = annotatedStderr.slice(result.stderr.length);
+      options.onData?.(Buffer.from(suffix));
+      options.onStderr?.(Buffer.from(suffix), { stop() {} });
+      audit?.({ type: "sandbox_violation_annotation", command, annotated: true });
+    }
+    audit?.({ type: "sandbox_command_exit", command, cwd: options.cwd, exitCode: result.exitCode });
+    return { ...result, stderr: annotatedStderr };
+  } finally {
+    try {
+      prepared.finish();
+    } catch (error) {
+      throw new SandboxExecError(`sandbox cleanup failed: ${errorMessage(error)}`, error);
+    }
+  }
+}
+
 async function spawnCommand(
   argv: string[],
-  options: CommandRunOptions & { env: NodeJS.ProcessEnv },
+  options: StreamingCommandRunOptions & { env: NodeJS.ProcessEnv },
 ): Promise<CommandRunResult> {
   return new Promise((resolve, reject) => {
     if (argv.length === 0) {
@@ -107,6 +157,7 @@ async function spawnCommand(
         child.kill("SIGKILL");
       }
     };
+    const control: StreamingCommandControl = { stop: kill };
 
     const onAbort = () => {
       kill();
@@ -122,12 +173,20 @@ async function spawnCommand(
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
     child.stdout?.on("data", (chunk: Buffer) => {
-      stdout = appendChunk(stdout, chunk);
+      stdout =
+        options.maxCapturedOutputBytes === undefined
+          ? appendChunk(stdout, chunk)
+          : appendChunkTail(stdout, chunk, options.maxCapturedOutputBytes);
       options.onData?.(chunk);
+      options.onStdout?.(chunk, control);
     });
     child.stderr?.on("data", (chunk: Buffer) => {
-      stderr = appendChunk(stderr, chunk);
+      stderr =
+        options.maxCapturedOutputBytes === undefined
+          ? appendChunk(stderr, chunk)
+          : appendChunkTail(stderr, chunk, options.maxCapturedOutputBytes);
       options.onData?.(chunk);
+      options.onStderr?.(chunk, control);
     });
 
     child.on("error", (error) => {

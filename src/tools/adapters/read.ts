@@ -1,34 +1,26 @@
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import path from "node:path";
+import { createReadToolDefinition, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Services } from "../../runtime-state";
-import { decideForTool, textResult } from "../tool-context";
-import { executeRead } from "../filesystem";
+import { createReadOperations } from "../guarded-operations";
+import { getToolCwd } from "../tool-context";
 
-const readSchema = Type.Object({
-  path: Type.String({ description: "Path to the file to read" }),
-  offset: Type.Optional(Type.Number({ description: "Line number to start from, 1-indexed" })),
-  limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
-});
-
-export function createReadTool(getServices: () => Services): ToolDefinition {
+export function createReadTool(getServices: () => Services): ToolDefinition<any, any, any> {
+  const template = createReadToolDefinition("");
   return {
+    ...template,
     name: "read",
-    label: "read",
-    description: "Read a file allowed by pi-sandbox-guard path policy.",
+    description: `${template.description} Access is constrained by pi-sandbox-guard path policy.`,
     promptSnippet: "Read files through pi-sandbox-guard",
-    parameters: readSchema,
-    async execute(_toolCallId, params: { path: string; offset?: number; limit?: number }) {
+    async execute(
+      toolCallId: string,
+      params: { path: string; offset?: number; limit?: number },
+      signal: AbortSignal | undefined,
+      onUpdate: any,
+      ctx: any,
+    ) {
       const services = getServices();
-      const absolutePath = path.resolve(services.config.cwd, params.path);
-      await decideForTool(services, { kind: "read", tool: "read", path: absolutePath });
-      return textResult(await executeRead(
-        services.config.pathPolicy,
-        services.config.cwd,
-        params.path,
-        params.offset,
-        params.limit,
-      ));
+      const cwd = getToolCwd(ctx, services.config.cwd);
+      const delegate = createReadToolDefinition(cwd, { operations: createReadOperations(services) });
+      return delegate.execute(toolCallId, params, signal, onUpdate, ctx);
     },
-  };
+  } as unknown as ToolDefinition<any, any, any>;
 }

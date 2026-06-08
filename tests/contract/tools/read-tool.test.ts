@@ -21,4 +21,25 @@ describe("read tool contract", () => {
       tool.execute("call-1", { path: denied }, undefined, undefined, fakeExtensionContext(root)),
     ).rejects.toThrow(/read denied/);
   });
+
+  it("uses Pi read truncation notices for large text files", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-read-tool-"));
+    const target = path.join(root, "large.txt");
+    const content = Array.from({ length: 2_005 }, (_value, index) => `line-${index + 1}`).join("\n");
+    await writeFile(target, content, "utf-8");
+    const config = effectiveConfig(root, {
+      sandbox: { filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } },
+      enforcement: { tools: ["read"], bypass: { mode: "deny" } },
+    });
+    const tool = createReadTool(() => makeServices(config));
+
+    const result = await tool.execute("call-1", { path: target }, undefined, undefined, fakeExtensionContext(root));
+    const text = result.content.find((item) => item.type === "text")?.text ?? "";
+
+    expect(text).toContain("line-1");
+    expect(text).toContain("line-2000");
+    expect(text).not.toContain("line-2001");
+    expect(text).toContain("Use offset=2001 to continue");
+    expect((result.details as { truncation?: { truncated?: boolean } } | undefined)?.truncation?.truncated).toBe(true);
+  });
 });

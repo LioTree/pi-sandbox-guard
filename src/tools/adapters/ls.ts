@@ -1,30 +1,31 @@
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { createLsToolDefinition, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import type { Services } from "../../runtime-state";
-import { decideForTool, textResult } from "../tool-context";
-import { executeLs } from "../filesystem";
+import { decideForTool, getToolCwd } from "../tool-context";
+import { createLsOperations } from "../guarded-operations";
 
-const lsSchema = Type.Object({
-  path: Type.Optional(Type.String()),
-  limit: Type.Optional(Type.Number()),
-});
-
-export function createLsTool(getServices: () => Services): ToolDefinition {
+export function createLsTool(getServices: () => Services): ToolDefinition<any, any, any> {
+  const template = createLsToolDefinition("");
   return {
+    ...template,
     name: "ls",
-    label: "ls",
-    description: "List readable directory entries through pi-sandbox-guard path policy.",
+    description: `${template.description} Access is constrained by pi-sandbox-guard path policy.`,
     promptSnippet: "List directories through pi-sandbox-guard",
-    parameters: lsSchema,
-    async execute(_toolCallId, params: { path?: string; limit?: number }) {
+    async execute(
+      toolCallId: string,
+      params: { path?: string; limit?: number },
+      signal: AbortSignal | undefined,
+      onUpdate: any,
+      ctx: any,
+    ) {
       const services = getServices();
-      const root = path.resolve(services.config.cwd, params.path ?? ".");
+      const cwd = getToolCwd(ctx, services.config.cwd);
+      const root = path.resolve(cwd, params.path ?? ".");
       await decideForTool(services, { kind: "read", tool: "ls", path: root });
-      return textResult(await executeLs(services.config.pathPolicy, services.config.cwd, {
-        searchPath: params.path,
-        limit: params.limit,
-      }));
+      const base = createLsToolDefinition(cwd, {
+        operations: createLsOperations(services),
+      });
+      return base.execute(toolCallId, params, signal, onUpdate, ctx);
     },
-  };
+  } as unknown as ToolDefinition<any, any, any>;
 }

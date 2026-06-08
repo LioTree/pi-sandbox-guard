@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { readFile, stat, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -138,6 +138,55 @@ describe("bash tool contract", () => {
         fakeExtensionContext(root),
       ),
     ).rejects.toThrow(/denied by fake reviewer/);
+  });
+
+  it("truncates large bash output from the tail and saves full output metadata", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-bash-tool-"));
+    const config = compileEffectiveConfig(
+      {
+        enabled: true,
+        sandbox: {
+          network: { allowedDomains: [], deniedDomains: [] },
+          filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] },
+        },
+        enforcement: {
+          tools: ["bash"],
+          bypass: { mode: "deny" },
+        },
+      },
+      path.join(root, ".pi", "sandbox-guard.json"),
+      root,
+    );
+    config.toolOutput.maxLines = 3;
+    config.toolOutput.maxBytes = 10_000;
+    config.toolOutput.fullOutputDir = root;
+    const sandbox = new SandboxSession(fakeSandboxManager());
+    await sandbox.initialize(config.sandboxRuntime);
+    const services: Services = {
+      config,
+      sandbox,
+      audit: () => {},
+    };
+    const tool = createBashTool(() => services);
+
+    const result = await tool.execute(
+      "call-1",
+      { command: "printf 'one\\ntwo\\nthree\\nfour\\nfive\\n'" },
+      undefined,
+      undefined,
+      fakeExtensionContext(root),
+    );
+
+    const text = result.content.find((item) => item.type === "text")?.text ?? "";
+    expect(text).not.toContain("one");
+    expect(text).not.toContain("two");
+    expect(text).toContain("three");
+    expect(text).toContain("five");
+    expect(text).toContain("Showing lines 3-5 of 5");
+    const fullOutputPath = (result.details as { fullOutputPath?: string } | undefined)?.fullOutputPath;
+    expect(fullOutputPath).toBeDefined();
+    expect(await readFile(fullOutputPath!, "utf-8")).toBe("one\ntwo\nthree\nfour\nfive\n");
+    expect((await stat(fullOutputPath!)).mode & 0o777).toBe(0o600);
   });
 });
 

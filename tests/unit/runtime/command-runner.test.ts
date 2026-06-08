@@ -4,7 +4,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import { SandboxExecError } from "../../../src/errors";
-import { runSandboxedCommand } from "../../../src/runtime/command-runner";
+import { runSandboxedCommand, runSandboxedStreamingCommand } from "../../../src/runtime/command-runner";
 import { SandboxSession } from "../../../src/runtime/sandbox-session";
 import { fakeSandboxManager } from "../../helpers";
 
@@ -134,5 +134,31 @@ describe("runSandboxedCommand", () => {
     await sandbox.initialize({ network: { allowedDomains: [], deniedDomains: [] }, filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } });
 
     await expect(runSandboxedCommand(sandbox, "true", { cwd: root })).rejects.toThrow(SandboxExecError);
+  });
+
+  it("streams sandboxed stdout and cleans up after early stop", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-command-"));
+    let cleanupCount = 0;
+    const sandbox = new SandboxSession(
+      fakeSandboxManager({
+        cleanupAfterCommand: () => {
+          cleanupCount++;
+        },
+      }),
+    );
+    await sandbox.initialize({ network: { allowedDomains: [], deniedDomains: [] }, filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } });
+
+    let streamed = "";
+    const result = await runSandboxedStreamingCommand(sandbox, "printf first; sleep 1; printf second", {
+      cwd: root,
+      onStdout(chunk, control) {
+        streamed += chunk.toString("utf-8");
+        control.stop();
+      },
+    });
+
+    expect(streamed).toBe("first");
+    expect(result.stdout).toBe("first");
+    expect(cleanupCount).toBe(1);
   });
 });

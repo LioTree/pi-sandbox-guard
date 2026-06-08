@@ -22,6 +22,13 @@ export type ReviewerConfig = {
   thinkingLevel?: string;
 };
 
+export type ToolOutputConfig = {
+  maxLines: number;
+  maxBytes: number;
+  grepMaxLineChars: number;
+  fullOutputDir: string;
+};
+
 export type RawGuardConfig = {
   enabled: boolean;
   sandbox: SandboxRuntimeConfig;
@@ -36,6 +43,7 @@ export type EffectiveConfig = {
   sandboxRuntime: SandboxRuntimeConfig;
   enforcement: EnforcementConfig;
   reviewer?: ReviewerConfig;
+  toolOutput: ToolOutputConfig;
   pathPolicy: CompiledPathPolicy;
 };
 

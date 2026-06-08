@@ -1,7 +1,5 @@
 # pi-sandbox-guard 架构说明
 
-本文档描述长期安全边界，不作为内部类型、函数名或文件布局的事实来源。具体实现细节以当前代码和测试为准；修改代码时应保持下面这些语义不变。
-
 ## 总体模型
 
 本项目为 Pi agent 提供统一安全执行层。配置表达用户安全意图，所有工具调用先规范化为 capability request，再由 policy 作唯一安全决策，最后执行或拒绝。
@@ -32,7 +30,7 @@ policy 是唯一能在 `deny`、`native`、`sandboxed`、`review` 之间作选�
 
 `bash` 默认走 sandboxed execution。只有显式 `bypassSandbox: true` 才能触发 LLM review；explicit bypass 不能直接放行。
 
-`read`、`write`、`edit` 可以使用 native filesystem API，但执行前必须先通过 policy。`grep`、`find` 和 `ls` 不能绕过 read policy，列表和搜索结果不能泄露 denied entries。
+`read`、`write`、`edit` 使用 native filesystem API，但执行前必须先通过 policy，所有 `access`、`readFile` 和 image mime 检测必须由 guarded operations 进入统一 policy。`grep`、`find` 和 `ls` 不能绕过 read policy，列表和搜索结果不能泄露 denied entries。
 
 每个 sandboxed command 在进程退出后都必须调用 `SandboxManager.cleanupAfterCommand()`。Linux 下 bubblewrap 在保护不存在的 denied path 时可能在 host 上创建空白 mount point 文件，例如 `.claude`；这个 cleanup 是必要的。目前通过 `SandboxSession.prepareCommand()` 返回的 `finish()` 方法统一触发 cleanup，`finish()` 还负责释放生命周期读锁。
 

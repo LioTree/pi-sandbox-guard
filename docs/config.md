@@ -71,9 +71,9 @@
 | `~/.gnupg` | GPG 私钥 |
 | `~/.config/opencode` | OpenCode 全局配置目录（`opencode.json` 可含 API key） |
 | `~/.claude` | Claude Code 全局 settings（`settings.json`、`CLAUDE.md` 等） |
-| `~/.claude.json` | Claude Code OAuth token 和 MCP 配置（独立文件，`~/.claude` 目录前缀无法覆盖） |
+| `~/.claude.json` | Claude Code OAuth token 和 MCP 配置（独立文件，`~/.claude` 前缀无法覆盖） |
 | `~/.codex` | Codex 全局配置目录 |
-| `~/.pi` | Pi 全局配置目录，包含 `agent/auth.json`（存有 25+ provider 的 API key 和 OAuth token，文件权限 `0600`）。通过 `allowRead: ["~/.pi/agent/git"]` 开窗允许读取扩展源码，避免遮挡 Linux sandbox 自身的 `apply-seccomp` 二进制 |
+| `~/.pi` | Pi 全局配置目录，含 `agent/auth.json`（25+ provider 的 API key/OAuth token，文件 `0600`）。`allowRead: ["~/.pi/agent/git"]` 除外开窗 |
 
 > **为什么需要 `allowRead: ["~/.pi/agent/git"]`**：Linux 下 sandbox-runtime 的 `apply-seccomp` 二进制位于本地 `node_modules` 中。当项目通过 git clone 安装在 `~/.pi/agent/git/` 下时，`denyRead: ["~/.pi"]` 会将整个 `~/.pi` 挂载 tmpfs，导致该二进制在沙箱内不可见，Unix socket 过滤失效（exit code 127）。
 
@@ -98,17 +98,26 @@
 
 ### 威胁链路
 
-以 `.opencode` 为例的典型攻击链：
-
-1. 恶意中转站注入 `write` tool call → 写入 `.opencode/plugins/backdoor.js`
-2. 开发者下次在项目中启动 `opencode` → `plugins/backdoor.js` 自动执行
-3. 插件通过 `$` (Bun shell) 执行任意命令 → 在 host 上逃逸
-
-同理，`.pi/extensions/`（Pi）和 `.git/hooks/`（Git）有相同的自动执行逃逸路径。
+典型攻击链：恶意中转站注入 `write` → 写入 `.opencode/plugins/backdoor.js` → 开发者下次 `opencode` 时插件自动在 host 执行。`.pi/extensions/` 和 `.git/hooks/` 有相同的自动执行逃逸路径。
 
 ## 文件系统
 
 `sandbox.filesystem` 同时 compile 成内部 path policy，约束所有 native 工具和 reviewer 工具的文件访问。没有单独的工具级权限配置。
+
+## 工具输出限制
+
+工具输出限制不作为用户 raw config 字段配置；它在 compile 阶段写入 effective configuration，便于审计当前会话真实生效的行为。
+
+默认值对齐 Pi 内置工具：
+
+| 字段 | 默认值 | 作用 |
+|------|--------|------|
+| `toolOutput.maxLines` | `2000` | `bash` 输出最多保留最后 2000 行；`read` 由 Pi 工具保留前 2000 行 |
+| `toolOutput.maxBytes` | `51200` | `bash` / `read` / `grep` / `find` / `ls` 输出最多返回 50KB |
+| `toolOutput.grepMaxLineChars` | `500` | `grep` 单条匹配行超过 500 字符时截断 |
+| `toolOutput.fullOutputDir` | 系统临时目录 | `bash` 输出被截断时保存完整输出的位置 |
+
+`bash` 输出被截断时，返回给模型的是尾部内容，并附带 `Full output: <path>`。完整输出文件由插件 host 进程写入，权限为 `0600`；audit event 只记录结构化元数据，不记录输出内容。
 
 ### 读权限：默认全开 + deny 排除
 
@@ -126,7 +135,9 @@
 
 **开窗匹配规则**：
 - `denyRead` 父目录 + `allowRead` 子目录 → 子目录可读（前缀匹配）
-- `denyRead` 文件 + `allowRead` 父目录 → 文件仍不可读（sandbox-runtime 内部 mount 对文件 deny 要求精确同名路径才能 override；native 工具不受此限制，走 path-policy 开窗会成功）
+- `denyRead` 文件 + `allowRead` 父目录 → native 工具可读，但 **sandbox 内进程仍不可读**（sandbox-runtime mount 要求 deny 文件和 allow 父目录精确同名路径才 override）
+
+> **注意**：`allowRead` 父目录开窗对 sandbox 内二进制不生效。这意味着 reviewer sandboxed bash 的 `read`/`grep` 等工具会受到此限制；native 工具（`read`、`write`、`edit` 的 adapter）不受影响。
 
 ### 写权限：默认全关 + allow 开放
 
@@ -143,7 +154,7 @@
 ### 已知限制
 
 - **`denyRead` 对尚不存在的路径不生效**：sandbox-runtime 的 mount 实现仅对 host 上已存在的路径做保护。沙箱进程如果在 `allowWrite` 区域内创建了一个被列入 `denyRead` 的新文件或目录，它将是可读的。
-- **`denyRead` 与 `denyWrite` 冲突**：sandbox-runtime 用 tmpfs 实现 `denyRead`，该挂载为可写，会覆盖 `denyWrite` 对同一路径的写保护（已知上游 bug，在 `denyRead` 和 `denyWrite` 中同时列出同一路径时写保护可能失效）。
+- **`denyRead` 与 `denyWrite` 冲突**：sandbox-runtime 用 tmpfs 实现 `denyRead`，该挂载为可读写，会覆盖 `denyWrite` 对同一路径的写保护。**同一路径同时出现在 `denyRead` 和 `denyWrite` 中时，agent 可以写入此路径。**（已知上游 bug）
 
 ## 网络
 
@@ -154,7 +165,7 @@
 
 ## Reviewer Bypass
 
-如果允许 explicit bypass 进入 LLM reviewer，必须显式配置 reviewer：
+如果允许 explicit bypass 进入 LLM reviewer，必须显式配置 reviewer。完整配置如下：
 
 ```json
 {
