@@ -1,0 +1,65 @@
+{
+  "enabled": true,
+  "sandbox": {
+    "network": {
+      "allowedDomains": [],
+      "deniedDomains": []
+    },
+    "filesystem": {
+      "denyRead": [
+        "**/.env",
+        "~/.ssh",
+        "~/.aws",
+        "~/.gnupg",
+        "~/.config/opencode",
+        "~/.claude",
+        "~/.claude.json",
+        "~/.codex",
+        "~/.pi/agent/auth.json",
+        "~/.pi/agent/models.json"
+      ],
+      "allowRead": [],
+      "allowWrite": ["."],
+      "denyWrite": [
+        "**/.git/hooks",
+        "**/.git/hooks/**",
+        "**/.git/config",
+        "**/.gitconfig",
+        "**/.gitmodules",
+        "**/.bashrc",
+        "**/.bash_profile",
+        "**/.zshrc",
+        "**/.zprofile",
+        "**/.profile",
+        "**/.ripgreprc",
+        "**/.mcp.json",
+        "**/.vscode",
+        "**/.vscode/**",
+        "**/.idea",
+        "**/.idea/**",
+        "**/.claude",
+        "**/.claude/**",
+        "**/.codex",
+        "**/.codex/**",
+        "**/.opencode",
+        "**/.opencode/**",
+        "**/.pi",
+        "**/.pi/**",
+        "**/opencode.json"
+      ]
+    }
+  },
+  "enforcement": {
+    "tools": ["bash", "read", "write", "edit", "grep", "find", "ls"],
+    "bypass": {
+      "mode": "review"
+    }
+  },
+  "reviewer": {
+    "enabled": true,
+    "model": "deepseek/deepseek-v4-flash",
+    "thinkingLevel": "off",
+    "timeoutMs": 30000,
+    "maxTranscriptTokens": 20000
+  }
+}

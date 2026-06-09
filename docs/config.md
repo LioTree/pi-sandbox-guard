@@ -144,16 +144,20 @@ pi-sandbox-guard 内部 path policy 会检查 ancestor，所以 native `write/ed
 
 Linux `sandbox-runtime` 使用 bubblewrap bind mount 实现写限制。它只能可靠挂载具体路径：
 
-- `denyWrite: [".claude"]`：可保护 cwd 根下 `.claude`。
+- `denyWrite: [".codex"]`：可保护 cwd 根下 `.codex`。
 - `denyWrite: ["packages/a/.claude"]`：可保护该具体子目录。
 - `denyWrite: ["**/.claude"]`：不要视为 Linux sandboxed `bash` 的可靠保护。
 
 如果需要 Linux 下递归保护 sandboxed `bash` 写入，必须使用额外机制，例如预展开已有目录、overlay transaction、AppArmor 后端，或限制 `bash` 写权限。当前推荐配置选择 literal path，避免虚假的递归安全承诺。
 
+`@anthropic-ai/sandbox-runtime` 会在用户配置之外追加一组强制 `denyWrite`。推荐配置显式覆盖这些目标，使 pi-sandbox-guard 的 native path policy 与 sandboxed `bash` 的保护范围对齐；具体清单见 [recommended-config.md](recommended-config.md) 的 “`sandbox-runtime` 内置 `denyWrite`” 小节。
+
+Linux 下不要同时 deny 缺失父目录和 `sandbox-runtime` 已强制禁止写入的子路径。例如 `.claude/commands`、`.claude/agents` 已由运行时保护；用户配置再写 `denyWrite: [".claude"]` 时，bubblewrap 可能触发 mount point 类型冲突，导致 `bwrap: Can't mkdir .../.claude: Not a directory`。需要保护 Claude 项目配置时，请使用具体路径，例如 `.claude/settings.json`、`.claude/settings.local.json`、`.claude/commands`、`.claude/agents`。
+
 ### 写权限已知限制
 
 - Linux `denyWrite` 对 glob 的支持受 bubblewrap 限制。普通 `**/` 不构成可靠保护。
-- Linux `denyRead` 与 `denyWrite` 同一路径冲突时，`denyRead` 的 tmpfs 可能覆盖写保护。这是上游 `sandbox-runtime`/bubblewrap 组合的已知限制。
+- Linux `denyRead` 与 `denyWrite` 同一路径冲突时，`denyRead` 的 tmpfs 可能覆盖写保护。这是 `sandbox-runtime` 与 bubblewrap 组合的已知限制。
 - `denyWrite: [".git"]` 可保护整个 cwd 根 `.git`，但会阻止正常 `git add` / `git commit`。若目标是允许正常 git 操作但阻止 hook/config 投毒，应保护 `.git/hooks` 和 `.git/config`，而不是整个 `.git`。
 
 ## 网络
