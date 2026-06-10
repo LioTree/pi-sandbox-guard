@@ -8,7 +8,7 @@ import {
 import path from "node:path";
 import type { Services } from "../../runtime-state";
 import { runSandboxedStreamingCommand, sandboxCommandFromEnv } from "../../runtime/command-runner";
-import { commandExitNotice, shellQuote } from "../shell";
+import { commandExitNotice, shellCommandFromArgv } from "../shell";
 import { decideForTool, getToolCwd, textResult } from "../tool-context";
 
 const DEFAULT_LIMIT = 1000;
@@ -152,7 +152,7 @@ function buildFdCommand(root: string, pattern: string, limit: number): string {
     }
   }
   args.push(effectivePattern, root);
-  return args.map(shellQuote).join(" ");
+  return shellCommandFromArgv(args);
 }
 
 function toPosixPath(value: string): string {

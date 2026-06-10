@@ -90,6 +90,37 @@ describe("filesystem tool contracts", () => {
     expect(cleanupCount).toBe(1);
   });
 
+  it("grep preserves ripgrep bang glob exclusions with quoted path segments", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-grep-bang-glob-"));
+    const visibleDir = path.join(root, "visible");
+    const skippedDir = path.join(root, "weird ' skip");
+    await mkdir(visibleDir);
+    await mkdir(skippedDir);
+    await writeFile(path.join(visibleDir, "visible.txt"), "needle visible", "utf-8");
+    await writeFile(path.join(skippedDir, "ignored.txt"), "needle ignored", "utf-8");
+    const config = effectiveConfig(root, {
+      sandbox: { filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } },
+      enforcement: { tools: ["grep"], bypass: { mode: "deny" } },
+    });
+    const services = await makeInitializedServices(config);
+    const tool = createGrepTool(() => services);
+
+    const text = toolText(
+      await tool.execute(
+        "call-1",
+        { pattern: "needle", path: root, glob: "!**/weird ' skip/*.txt", literal: true },
+        undefined,
+        undefined,
+        fakeExtensionContext(root),
+      ),
+    );
+
+    expect(text).toContain("visible.txt");
+    expect(text).toContain("needle visible");
+    expect(text).not.toContain("ignored.txt");
+    expect(text).not.toContain("needle ignored");
+  });
+
   it("grep supports context and truncates long match lines", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "psg-grep-tool-"));
     const target = path.join(root, "visible.txt");

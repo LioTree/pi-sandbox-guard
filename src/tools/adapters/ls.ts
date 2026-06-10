@@ -8,7 +8,7 @@ import {
 import path from "node:path";
 import type { Services } from "../../runtime-state";
 import { runSandboxedStreamingCommand, sandboxCommandFromEnv } from "../../runtime/command-runner";
-import { commandExitNotice, shellQuote } from "../shell";
+import { commandExitNotice, shellCommandFromArgv } from "../shell";
 import { decideForTool, getToolCwd, textResult } from "../tool-context";
 
 const DEFAULT_LIMIT = 500;
@@ -128,5 +128,5 @@ function addLsOutputLine(outputLines: string[], rawLine: string): void {
 }
 
 function buildLsCommand(root: string): string {
-  return ["ls", "-1Ap", "--", root].map(shellQuote).join(" ");
+  return shellCommandFromArgv(["ls", "-1Ap", "--", root]);
 }

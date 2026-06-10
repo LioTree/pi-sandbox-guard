@@ -24,6 +24,7 @@
     "@anthropic-ai/sandbox-runtime": "^0.0.54",
     "@earendil-works/pi-coding-agent": "^0.78.1",
     "picomatch": "^4.0.4",
+    "shlex": "^3.0.0",
     "typebox": "^1.1.38"
   },
   "devDependencies": {

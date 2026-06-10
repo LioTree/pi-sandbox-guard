@@ -9,7 +9,7 @@ import {
 import path from "node:path";
 import type { Services } from "../../runtime-state";
 import { runSandboxedStreamingCommand, sandboxCommandFromEnv } from "../../runtime/command-runner";
-import { commandExitNotice, shellQuote } from "../shell";
+import { commandExitNotice, shellCommandFromArgv } from "../shell";
 import { decideForTool, getToolCwd, textResult } from "../tool-context";
 
 export function createGrepTool(getServices: () => Services): ToolDefinition<any, any, any> {
@@ -193,7 +193,7 @@ function buildRgCommand(root: string, params: GrepParams): string {
     args.push("--glob", params.glob);
   }
   args.push("--", params.pattern, root);
-  return args.map(shellQuote).join(" ");
+  return shellCommandFromArgv(args);
 }
 
 function parseRgJsonEvent(line: string): RgJsonEvent | undefined {
