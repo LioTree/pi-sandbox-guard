@@ -4,6 +4,53 @@
 
 常规本地测试不应要求启动真实 Pi agent。需要真实 Pi 环境的测试可以作为少量 smoke test，但不能成为默认必跑测试。
 
+## 测试行为，不测试实现形状
+
+测试应验证安全语义、用户可见行为和跨层契约，而不是锁死当前实现细节。一个测试只有在对应行为真的坏掉时才应该失败；如果只是重构实现、改内部变量名或替换 command wrapping 方式就失败，通常说明测试层级不对。
+
+避免在高层 contract / integration 测试中断言：
+
+- 内部 wrapper 命令的精确字符串，例如 `bash -c ...`。
+- 内部环境变量名、临时文件名、helper 函数名。
+- adapter 传给 runtime 的完整 command string 形状，除非该字符串本身就是该层公开契约。
+- mock 中复刻实现算法，再通过 `includes()` 或字符串片段检查实现分支。
+- 仅为覆盖代码行而构造、但不对应安全边界或用户可见行为的测试。
+
+优先验证：
+
+- 工具输出是否符合用户可见行为。
+- `deny`、`review`、`native`、`sandboxed` 决策是否进入正确流程。
+- `deny` 时底层 filesystem 或 sandbox command 是否没有执行。
+- sandboxed command 是否真实受 `sandbox-runtime` 约束。
+- cleanup、audit、fail closed 等安全契约是否成立。
+- 对 search/list 行为，优先构造真实临时文件树并验证结果，而不是检查内部 glob 或 command 字符串。
+
+允许的实现级测试只应放在最低合适层级。例如 command builder/helper 的单元测试可以验证它自己的输出；但 adapter contract 测试不应知道 command builder 的内部协议。
+
+判断标准：如果一个测试失败后，修复方式只是“把 expected 字符串改成新的内部实现”，而不是修复用户行为或安全语义，那么这个测试大概率是实现细节测试。
+
+示例：
+
+```ts
+// Bad: adapter contract 锁死内部 wrapper 形式。
+expect(wrappedCommand).toBe(`bash -c 'eval "$PI_SANDBOX_GUARD_COMMAND"'`);
+
+// Good: 验证 adapter 契约和用户可见行为。
+expect(wrapCalls).toBe(1);
+expect(text).toContain("expected output");
+expect(cleanupCount).toBe(1);
+```
+
+```ts
+// Bad: 测试内部 pattern rewrite 字符串。
+expect(command).toContain("**/src/*.ts");
+
+// Good: 构造真实文件树，验证用户输入能得到正确结果。
+await writeFile(path.join(root, "src", "a.ts"), "", "utf-8");
+const text = toolText(await find({ pattern: "./src/*.ts", path: root }));
+expect(text).toContain("src/a.ts");
+```
+
 ## 测试分层
 
 ### 单元测试
