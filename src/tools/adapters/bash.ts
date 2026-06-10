@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { ReviewDeniedError } from "../../errors";
 import type { Services } from "../../runtime-state";
 import { OutputAccumulator, type OutputSnapshot } from "../../runtime/output-accumulator";
-import { runNativeCommand, runSandboxedCommand } from "../../runtime/command-runner";
+import { runNativeCommand, runSandboxedCommand, sandboxCommandFromEnv } from "../../runtime/command-runner";
 import { decideForTool, getToolCwd, textResult } from "../tool-context";
 
 const bashSchema = Type.Object({
@@ -75,6 +75,12 @@ export function createBashTool(getServices: () => Services): ToolDefinition {
                   onData,
                   sandboxConfig: services.config.sandboxRuntime,
                   maxCapturedOutputBytes: services.config.toolOutput.maxBytes,
+                  // Avoid passing raw user commands through sandbox-runtime's
+                  // nested shell quoting; it can rewrite app-level syntax such
+                  // as ripgrep's -g '!pattern' into a literal \! glob. Pass
+                  // the logical command through the environment rather than
+                  // stdin so commands inside the script can still read stdin.
+                  ...sandboxCommandFromEnv(params.command),
                 },
                 services.audit,
               );

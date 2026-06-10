@@ -70,18 +70,6 @@ export async function checkPathAccess(
   return { allowed: true, resolvedPath };
 }
 
-export async function filterReadableChildren(policy: CompiledPathPolicy, dirPath: string, entries: string[]): Promise<string[]> {
-  const allowed: string[] = [];
-  for (const entry of entries) {
-    const childPath = path.join(dirPath, entry);
-    const accessResult = await checkPathAccess(policy, childPath, "read");
-    if (accessResult.allowed) {
-      allowed.push(entry);
-    }
-  }
-  return allowed;
-}
-
 export async function resolveForPolicy(requestedPath: string, cwd: string, mode: AccessMode): Promise<string> {
   const absolutePath = resolveConfigPath(requestedPath, cwd);
 

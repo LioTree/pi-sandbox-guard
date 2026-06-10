@@ -22,7 +22,7 @@ config -> validate -> compile -> capability request -> policy decision -> execut
 
 `sandbox.filesystem` 是所有文件相关行为的唯一权限来源，并同时驱动 sandbox runtime 和内部 path policy。不要创建 `policy.denyRead`、`policy.allowWrite` 之类的平行权限系统。
 
-path policy 必须覆盖 read、write、search 和 list。路径检查必须处理 symlink：已存在路径先 resolve real path，再决策；尚不存在的写入目标 resolve 最近存在的父目录。allow 和 deny 的优先级见 [config.md](config.md)。
+path policy 必须覆盖 read、write、search 和 list 的目标路径。路径检查必须处理 symlink：已存在路径先 resolve real path，再决策；尚不存在的写入目标 resolve 最近存在的父目录。allow 和 deny 的优先级见 [config.md](config.md)。
 
 policy 是唯一能在 `deny`、`native`、`sandboxed`、`review` 之间作选择的层。展示文案、adapter 分支和 runtime 执行都不能绕过 policy decision。
 
@@ -30,7 +30,7 @@ policy 是唯一能在 `deny`、`native`、`sandboxed`、`review` 之间作选�
 
 `bash` 默认走 sandboxed execution。只有显式 `bypassSandbox: true` 才能触发 LLM review；explicit bypass 不能直接放行。
 
-`read`、`write`、`edit` 使用 native filesystem API，但执行前必须先通过 policy，所有 `access`、`readFile` 和 image mime 检测必须由 guarded operations 进入统一 policy。`grep`、`find` 和 `ls` 不能绕过 read policy，列表和搜索结果不能泄露 denied entries。
+`read`、`write`、`edit` 使用 native filesystem API，但执行前必须先通过 policy，所有 `access`、`readFile` 和 image mime 检测必须由 guarded operations 进入统一 policy。`grep`、`find` 和 `ls` 不能绕过 read policy；list/search 对 `denyRead` 的边界语义见 [config.md](config.md)。
 
 每个 sandboxed command 在进程退出后都必须调用 `SandboxManager.cleanupAfterCommand()`。Linux 下 bubblewrap 在保护不存在的 denied path 时可能在 host 上创建空白 mount point 文件，例如 `.claude`；这个 cleanup 是必要的。目前通过 `SandboxSession.prepareCommand()` 返回的 `finish()` 方法统一触发 cleanup，`finish()` 还负责释放生命周期读锁。
 

@@ -12,7 +12,18 @@ export type CommandRunOptions = {
   onData?: (data: Buffer) => void;
   sandboxConfig?: Partial<SandboxRuntimeConfig>;
   maxCapturedOutputBytes?: number;
+  sandboxCommand?: string;
+  env?: NodeJS.ProcessEnv;
 };
+
+export const SANDBOX_COMMAND_ENV = "PI_SANDBOX_GUARD_COMMAND";
+
+export function sandboxCommandFromEnv(command: string): Pick<CommandRunOptions, "sandboxCommand" | "env"> {
+  return {
+    sandboxCommand: `bash -c 'eval "$${SANDBOX_COMMAND_ENV}"'`,
+    env: { [SANDBOX_COMMAND_ENV]: command },
+  };
+}
 
 export type StreamingCommandRunOptions = CommandRunOptions & {
   onStdout?: (data: Buffer, control: StreamingCommandControl) => void;
@@ -35,9 +46,10 @@ export async function runSandboxedCommand(
   options: CommandRunOptions,
   audit?: AuditSink,
 ): Promise<CommandRunResult> {
+  const sandboxCommand = options.sandboxCommand ?? command;
   let prepared: Awaited<ReturnType<SandboxSession["prepareCommand"]>>;
   try {
-    prepared = await sandbox.prepareCommand(command, {
+    prepared = await sandbox.prepareCommand(sandboxCommand, {
       abortSignal: options.signal,
       customConfig: options.sandboxConfig,
     });
@@ -48,7 +60,7 @@ export async function runSandboxedCommand(
   try {
     const result = await spawnCommand(prepared.argv, {
       ...options,
-      env: { ...process.env, ...prepared.env },
+      env: { ...process.env, ...prepared.env, ...options.env },
     });
     const annotatedStderr = sandbox.annotateStderr(command, result.stderr);
     const annotated = annotatedStderr !== result.stderr;
@@ -72,7 +84,7 @@ export async function runNativeCommand(command: string, options: CommandRunOptio
   const args = process.platform === "win32" ? ["/d", "/s", "/c", command] : ["-lc", command];
   return spawnCommand([shell, ...args], {
     ...options,
-    env: { ...process.env },
+    env: { ...process.env, ...options.env },
   });
 }
 
@@ -82,9 +94,10 @@ export async function runSandboxedStreamingCommand(
   options: StreamingCommandRunOptions,
   audit?: AuditSink,
 ): Promise<CommandRunResult> {
+  const sandboxCommand = options.sandboxCommand ?? command;
   let prepared: Awaited<ReturnType<SandboxSession["prepareCommand"]>>;
   try {
-    prepared = await sandbox.prepareCommand(command, {
+    prepared = await sandbox.prepareCommand(sandboxCommand, {
       abortSignal: options.signal,
       customConfig: options.sandboxConfig,
     });
@@ -95,7 +108,7 @@ export async function runSandboxedStreamingCommand(
   try {
     const result = await spawnCommand(prepared.argv, {
       ...options,
-      env: { ...process.env, ...prepared.env },
+      env: { ...process.env, ...prepared.env, ...options.env },
     });
     const annotatedStderr = sandbox.annotateStderr(command, result.stderr);
     const annotated = annotatedStderr !== result.stderr;

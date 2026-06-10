@@ -13,7 +13,7 @@
 - config schema validation。
 - config locations 和 single-config 选择逻辑。
 - config compile 到 effective configuration。
-- path policy 的 allow/deny、读写权限、搜索权限和列表权限。
+- path policy 的 allow/deny、读写权限、搜索权限和列表目标权限。
 - symlink 和不存在写入目标的路径解析规则。
 - policy decision：`deny`、`native`、`sandboxed`、`review`。
 - typed errors 和 audit event shaping。
@@ -67,7 +67,7 @@ Adapter contract 测试不需要真实 Pi session。Pi SDK child session 的行�
 - `grep`、`find`、`ls`。
 - reviewer 取证工具，包括只读工具和受限 sandboxed shell。
 
-测试应构造同一组 allow/deny 路径，并分别验证 shell、native tool、search/list、reviewer tool 的结果一致。
+测试应构造同一组 allow/deny 路径，并分别验证 shell、native tool、search/list、reviewer tool 的结果一致；同时覆盖 `denyRead` 对直接读取、递归搜索和父目录 listing 的边界语义，具体规则见 [config.md](config.md)。
 
 ### Symlink
 

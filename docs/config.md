@@ -99,6 +99,8 @@ config -> validate -> compile -> capability request -> policy decision -> execut
 
 `allowRead` 不是独立门控。它只在 `denyRead` 内部起作用。这意味着当前模型不能表达“只允许读 cwd”：不设 `denyRead` 就是默认可读；`denyRead: ["/"]` 又会阻断 sandbox 内系统路径，导致命令无法运行。
 
+`denyRead` 保护目标路径及其内部内容。对目录而言，不能直接读取或列出该目录，也不能通过 `grep` / `find` 递归返回目录内部文件；但允许在父目录的 `ls` 输出中显示该目录节点名称。
+
 开窗匹配规则：
 
 - `denyRead` 父目录 + `allowRead` 子目录：子目录可读。

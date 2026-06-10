@@ -8,7 +8,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import type { Services } from "../../runtime-state";
-import { runSandboxedStreamingCommand } from "../../runtime/command-runner";
+import { runSandboxedStreamingCommand, sandboxCommandFromEnv } from "../../runtime/command-runner";
+import { commandExitNotice, shellQuote } from "../shell";
 import { decideForTool, getToolCwd, textResult } from "../tool-context";
 
 export function createGrepTool(getServices: () => Services): ToolDefinition<any, any, any> {
@@ -88,6 +89,7 @@ async function executeSandboxedRg(
       cwd,
       signal,
       maxCapturedOutputBytes: maxBytes,
+      ...sandboxCommandFromEnv(command),
       onStdout(chunk, control) {
         buffered += chunk.toString("utf-8");
         const lines = buffered.split("\n");
@@ -135,8 +137,8 @@ async function executeSandboxedRg(
     }
   }
 
-  if (result.exitCode !== 0 && result.exitCode !== 1 && !matchLimitReached) {
-    throw new Error(result.stderr.trim() || `rg exited with code ${result.exitCode}`);
+  if (result.exitCode !== 0 && result.exitCode !== 1 && matches === 0 && !matchLimitReached) {
+    throw new Error(result.stderr.trim() || commandExitNotice("rg", result.exitCode));
   }
   if (matches === 0) {
     return { text: "No matches found" };
@@ -160,6 +162,9 @@ async function executeSandboxedRg(
     notices.push(`Some lines truncated to ${maxLineChars} chars. Use read tool to see full lines`);
     details.linesTruncated = true;
   }
+  if (result.exitCode !== 0 && result.exitCode !== 1 && !matchLimitReached) {
+    notices.push(`${commandExitNotice("rg", result.exitCode)}; results may be incomplete`);
+  }
 
   const text = notices.length > 0 ? `${truncation.content}\n\n[${notices.join(". ")}]` : truncation.content;
   return { text, details: Object.keys(details).length > 0 ? details : undefined };
@@ -173,6 +178,7 @@ function buildRgCommand(root: string, params: GrepParams): string {
     "--color=never",
     "--hidden",
     "--no-require-git",
+    "--no-ignore-parent",
   ];
   if (params.ignoreCase) {
     args.push("--ignore-case");
@@ -188,13 +194,6 @@ function buildRgCommand(root: string, params: GrepParams): string {
   }
   args.push("--", params.pattern, root);
   return args.map(shellQuote).join(" ");
-}
-
-function shellQuote(value: string): string {
-  if (/^[A-Za-z0-9_/:=.,@%+-]+$/.test(value)) {
-    return value;
-  }
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function parseRgJsonEvent(line: string): RgJsonEvent | undefined {

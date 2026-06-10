@@ -1,18 +1,15 @@
 import { constants } from "node:fs";
-import { access, mkdir, open, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, open, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   EditOperations,
-  FindOperations,
-  LsOperations,
   ReadOperations,
   WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 import type { Services } from "../runtime-state";
 import { PolicyDeniedError } from "../errors";
 import type { ReadToolName, WriteToolName } from "../policy/capability";
-import { checkPathAccess, filterReadableChildren } from "../policy/path-policy";
-import { filePatternMatcher, walkReadablePaths } from "./filesystem";
+import { checkPathAccess } from "../policy/path-policy";
 import { decideForTool } from "./tool-context";
 
 type GuardCache = Map<string, string>;
@@ -91,54 +88,6 @@ export function createEditOperations(services: Services, cache: GuardCache = new
     writeFile: async (absolutePath, content) => {
       const resolved = await guardWrite(services, "edit", absolutePath, cache);
       await writeFile(resolved, content, "utf-8");
-    },
-  };
-}
-
-export function createLsOperations(services: Services, cache: GuardCache = new Map()): LsOperations {
-  return {
-    exists: async (absolutePath) => {
-      try {
-        const resolved = await guardRead(services, "ls", absolutePath, cache);
-        await access(resolved, constants.F_OK);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    stat: async (absolutePath) => {
-      const resolved = await guardRead(services, "ls", absolutePath, cache);
-      return stat(resolved);
-    },
-    readdir: async (absolutePath) => {
-      const resolved = await guardRead(services, "ls", absolutePath, cache);
-      const entries = await readdir(resolved);
-      return filterReadableChildren(services.config.pathPolicy, resolved, entries);
-    },
-  };
-}
-
-export function createFindOperations(services: Services, cache: GuardCache = new Map()): FindOperations {
-  return {
-    exists: async (absolutePath) => {
-      try {
-        const resolved = await guardRead(services, "find", absolutePath, cache);
-        await access(resolved, constants.F_OK);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    glob: async (pattern, cwd, options) => {
-      const root = await guardRead(services, "find", cwd, cache);
-      const matcher = filePatternMatcher(pattern);
-      const paths = await walkReadablePaths(services.config.pathPolicy, root, options.limit * 2);
-      return paths
-        .filter((candidate) => {
-          const relative = path.relative(root, candidate);
-          return relative && matcher(relative);
-        })
-        .slice(0, options.limit);
     },
   };
 }

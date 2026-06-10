@@ -23,7 +23,7 @@ v1 接管这些 Pi 内置工具：`bash`、`read`、`write`、`edit`、`grep`、
 
 修改工具行为时必须保持统一流程：先把工具参数规范化为 capability request，再由 policy 作唯一决策，最后根据 decision 执行或拒绝。
 
-不要让 `read`、`write`、`edit`、`grep`、`find`、`ls` 各自发明权限检查。路径、symlink、搜索范围和列表过滤都应回到同一份 path policy。
+不要让 `read`、`write`、`edit`、`grep`、`find`、`ls` 各自发明权限检查。路径、symlink、搜索范围和列表目标检查都应回到同一份 path policy；`denyRead` 的 list/search 边界语义见 [docs/config.md](docs/config.md)。
 
 ## 边界约定
 

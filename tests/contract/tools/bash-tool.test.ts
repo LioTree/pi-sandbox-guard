@@ -29,7 +29,15 @@ describe("bash tool contract", () => {
       path.join(root, ".pi", "sandbox-guard.json"),
       root,
     );
-    const sandbox = new SandboxSession(fakeSandboxManager());
+    let wrapCalls = 0;
+    const sandbox = new SandboxSession(
+      fakeSandboxManager({
+        wrapWithSandboxArgv: async (command: string) => {
+          wrapCalls++;
+          return { argv: [process.env.SHELL ?? "sh", "-lc", command], env: {} };
+        },
+      }),
+    );
     await sandbox.initialize(config.sandboxRuntime);
     const services: Services = {
       config,
@@ -53,6 +61,50 @@ describe("bash tool contract", () => {
 
     const text = result.content.find((item) => item.type === "text")?.text ?? "";
     expect(text).toContain("sandboxed");
+    expect(wrapCalls).toBe(1);
+  });
+
+  it("does not feed the command script to child process stdin", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-bash-tool-"));
+    const config = compileEffectiveConfig(
+      {
+        enabled: true,
+        sandbox: {
+          network: { allowedDomains: [], deniedDomains: [] },
+          filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] },
+        },
+        enforcement: {
+          tools: ["bash"],
+          bypass: { mode: "deny" },
+        },
+      },
+      path.join(root, ".pi", "sandbox-guard.json"),
+      root,
+    );
+    const sandbox = new SandboxSession(fakeSandboxManager());
+    await sandbox.initialize(config.sandboxRuntime);
+    const services: Services = {
+      config,
+      sandbox,
+      reviewer: new ReviewService({
+        async review() {
+          throw new Error("reviewer should not run");
+        },
+      }),
+      audit: () => {},
+    };
+    const tool = createBashTool(() => services);
+
+    const result = await tool.execute(
+      "call-1",
+      { command: "cat\necho after-stdin-reader" },
+      undefined,
+      undefined,
+      fakeExtensionContext(root),
+    );
+
+    const text = result.content.find((item) => item.type === "text")?.text ?? "";
+    expect(text).toContain("after-stdin-reader");
   });
 
   it("passes the effective sandbox runtime config into sandboxed command execution", async () => {

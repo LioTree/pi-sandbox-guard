@@ -4,7 +4,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import { SandboxExecError } from "../../../src/errors";
-import { runSandboxedCommand, runSandboxedStreamingCommand } from "../../../src/runtime/command-runner";
+import { runSandboxedCommand, runSandboxedStreamingCommand, sandboxCommandFromEnv } from "../../../src/runtime/command-runner";
 import { SandboxSession } from "../../../src/runtime/sandbox-session";
 import { fakeSandboxManager } from "../../helpers";
 
@@ -93,6 +93,41 @@ describe("runSandboxedCommand", () => {
     await runSandboxedCommand(sandbox, "true", { cwd: root, sandboxConfig });
 
     expect(capturedConfig).toEqual(sandboxConfig);
+  });
+
+  it("can wrap a stable sandbox command while preserving the logical command for audit", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-command-"));
+    const auditEvents: unknown[] = [];
+    const logicalCommand = "printf wrapped-ok";
+    let wrappedCommand = "";
+    const sandbox = new SandboxSession(
+      fakeSandboxManager({
+        wrapWithSandboxArgv: async (command: string) => {
+          wrappedCommand = command;
+          return { argv: [process.env.SHELL ?? "sh", "-lc", command], env: {} };
+        },
+      }),
+    );
+    await sandbox.initialize({ network: { allowedDomains: [], deniedDomains: [] }, filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } });
+
+    const result = await runSandboxedCommand(
+      sandbox,
+      logicalCommand,
+      {
+        cwd: root,
+        ...sandboxCommandFromEnv(logicalCommand),
+      },
+      (event) => auditEvents.push(event),
+    );
+
+    expect(wrappedCommand).not.toBe(logicalCommand);
+    expect(result.stdout).toBe("wrapped-ok");
+    expect(auditEvents).toContainEqual({
+      type: "sandbox_command_exit",
+      command: logicalCommand,
+      cwd: root,
+      exitCode: 0,
+    });
   });
 
   it("waits for active commands before resetting the sandbox manager", async () => {

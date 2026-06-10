@@ -68,11 +68,11 @@ describe("filesystem tool contracts", () => {
       sandbox: { filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } },
       enforcement: { tools: ["grep"], bypass: { mode: "deny" } },
     });
-    let wrappedCommand = "";
+    let wrapCalls = 0;
     let cleanupCount = 0;
     const services = await makeInitializedServices(config, {
       wrapWithSandboxArgv: async (command: string) => {
-        wrappedCommand = command;
+        wrapCalls++;
         return { argv: [process.env.SHELL ?? "sh", "-lc", command], env: {} };
       },
       cleanupAfterCommand: () => {
@@ -85,7 +85,7 @@ describe("filesystem tool contracts", () => {
       await tool.execute("call-1", { pattern: "needle", path: root, literal: true }, undefined, undefined, fakeExtensionContext(root)),
     );
 
-    expect(wrappedCommand).toContain("rg --json");
+    expect(wrapCalls).toBe(1);
     expect(text).toContain("visible.txt");
     expect(cleanupCount).toBe(1);
   });
@@ -137,21 +137,184 @@ describe("filesystem tool contracts", () => {
     ).rejects.toThrow();
   });
 
-  it("find filters denied files and directories", async () => {
+  it("grep returns parsed matches even when rg exits with an error", async () => {
+    const { root } = await createSearchTree();
+    const config = effectiveConfig(root, {
+      sandbox: { filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } },
+      enforcement: { tools: ["grep"], bypass: { mode: "deny" } },
+    });
+    const matchEvent = JSON.stringify({
+      type: "match",
+      data: {
+        path: { text: path.join(root, "public", "visible.txt") },
+        lines: { text: "needle visible\n" },
+        line_number: 1,
+      },
+    });
+    const services = await makeInitializedServices(config, {
+      wrapWithSandboxArgv: async () => ({
+        argv: [process.env.SHELL ?? "sh", "-lc", `printf '%s\n' '${matchEvent}' >&1; printf 'rg: denied: Permission denied\n' >&2; exit 2`],
+        env: {},
+      }),
+    });
+    const tool = createGrepTool(() => services);
+
+    const text = toolText(
+      await tool.execute("call-1", { pattern: "needle", path: root, literal: true }, undefined, undefined, fakeExtensionContext(root)),
+    );
+
+    expect(text).toContain("public/visible.txt:1: needle visible");
+    expect(text).toContain("rg exited with code 2; results may be incomplete");
+  });
+
+  it("grep reports signal termination without a null exit-code notice", async () => {
+    const { root } = await createSearchTree();
+    const config = effectiveConfig(root, {
+      sandbox: { filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } },
+      enforcement: { tools: ["grep"], bypass: { mode: "deny" } },
+    });
+    const matchEvent = JSON.stringify({
+      type: "match",
+      data: {
+        path: { text: path.join(root, "public", "visible.txt") },
+        lines: { text: "needle visible\n" },
+        line_number: 1,
+      },
+    });
+    const services = await makeInitializedServices(config, {
+      wrapWithSandboxArgv: async () => ({
+        argv: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(`${matchEvent}\n`)}); process.kill(process.pid, "SIGTERM");`],
+        env: {},
+      }),
+    });
+    const tool = createGrepTool(() => services);
+
+    const text = toolText(
+      await tool.execute("call-1", { pattern: "needle", path: root, literal: true }, undefined, undefined, fakeExtensionContext(root)),
+    );
+
+    expect(text).toContain("rg was terminated; results may be incomplete");
+    expect(text).not.toContain("code null");
+  });
+
+  it("find denies disallowed search roots before running fd", async () => {
     const { root, deniedDir } = await createSearchTree();
     const config = effectiveConfig(root, {
       sandbox: { filesystem: { denyRead: [deniedDir], allowWrite: [root], denyWrite: [] } },
       enforcement: { tools: ["find"], bypass: { mode: "deny" } },
     });
-    const tool = createFindTool(() => makeServices(config));
+    const services = await makeInitializedServices(config);
+    const tool = createFindTool(() => services);
+
+    await expect(
+      tool.execute("call-1", { pattern: "*.txt", path: deniedDir }, undefined, undefined, fakeExtensionContext(root)),
+    ).rejects.toThrow(/read denied/);
+  });
+
+  it("find runs fd through the sandbox wrapper", async () => {
+    const { root } = await createSearchTree();
+    const config = effectiveConfig(root, {
+      sandbox: { filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } },
+      enforcement: { tools: ["find"], bypass: { mode: "deny" } },
+    });
+    let wrapCalls = 0;
+    let cleanupCount = 0;
+    const services = await makeInitializedServices(config, {
+      wrapWithSandboxArgv: async (command: string) => {
+        wrapCalls++;
+        return { argv: [process.env.SHELL ?? "sh", "-lc", command], env: {} };
+      },
+      cleanupAfterCommand: () => {
+        cleanupCount++;
+      },
+    });
+    const tool = createFindTool(() => services);
 
     const text = toolText(
       await tool.execute("call-1", { pattern: "*.txt", path: root }, undefined, undefined, fakeExtensionContext(root)),
     );
 
-    expect(text).toContain("visible.txt");
-    expect(text).not.toContain("secret.txt");
-    expect(text).not.toContain("denied");
+    expect(wrapCalls).toBe(1);
+    expect(text).toContain("public/visible.txt");
+    expect(cleanupCount).toBe(1);
+  });
+
+  it("find preserves trailing spaces in returned paths", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-find-space-"));
+    const publicDir = path.join(root, "public");
+    await mkdir(publicDir);
+    await writeFile(path.join(publicDir, "trailing-space "), "", "utf-8");
+    const config = effectiveConfig(root, {
+      sandbox: { filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } },
+      enforcement: { tools: ["find"], bypass: { mode: "deny" } },
+    });
+    const services = await makeInitializedServices(config);
+    const tool = createFindTool(() => services);
+
+    const text = toolText(
+      await tool.execute("call-1", { pattern: "trailing-space*", path: root }, undefined, undefined, fakeExtensionContext(root)),
+    );
+
+    expect(text).toBe("public/trailing-space ");
+  });
+
+  it("find only reports limit reached when fd returns more than the requested limit", async () => {
+    const oneRoot = await mkdtemp(path.join(tmpdir(), "psg-find-limit-one-"));
+    await writeFile(path.join(oneRoot, "one.txt"), "", "utf-8");
+    const oneConfig = effectiveConfig(oneRoot, {
+      sandbox: { filesystem: { denyRead: [], allowWrite: [oneRoot], denyWrite: [] } },
+      enforcement: { tools: ["find"], bypass: { mode: "deny" } },
+    });
+    const oneServices = await makeInitializedServices(oneConfig);
+    const oneResultText = toolText(
+      await createFindTool(() => oneServices).execute(
+        "call-1",
+        { pattern: "*.txt", path: oneRoot, limit: 1 },
+        undefined,
+        undefined,
+        fakeExtensionContext(oneRoot),
+      ),
+    );
+
+    const twoRoot = await mkdtemp(path.join(tmpdir(), "psg-find-limit-two-"));
+    await writeFile(path.join(twoRoot, "a.txt"), "", "utf-8");
+    await writeFile(path.join(twoRoot, "b.txt"), "", "utf-8");
+    const twoConfig = effectiveConfig(twoRoot, {
+      sandbox: { filesystem: { denyRead: [], allowWrite: [twoRoot], denyWrite: [] } },
+      enforcement: { tools: ["find"], bypass: { mode: "deny" } },
+    });
+    const twoServices = await makeInitializedServices(twoConfig);
+    const twoResultText = toolText(
+      await createFindTool(() => twoServices).execute(
+        "call-2",
+        { pattern: "*.txt", path: twoRoot, limit: 1 },
+        undefined,
+        undefined,
+        fakeExtensionContext(twoRoot),
+      ),
+    );
+
+    expect(oneResultText).not.toContain("results limit reached");
+    expect(twoResultText).toContain("1 results limit reached");
+    const visibleLimitedResults = ["a.txt", "b.txt"].filter((name) => twoResultText.includes(name));
+    expect(visibleLimitedResults).toHaveLength(1);
+  });
+
+  it("find accepts slash patterns with a leading ./", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "psg-find-dot-slash-"));
+    const srcDir = path.join(root, "src");
+    await mkdir(srcDir);
+    await writeFile(path.join(srcDir, "a.ts"), "", "utf-8");
+    const config = effectiveConfig(root, {
+      sandbox: { filesystem: { denyRead: [], allowWrite: [root], denyWrite: [] } },
+      enforcement: { tools: ["find"], bypass: { mode: "deny" } },
+    });
+    const services = await makeInitializedServices(config);
+    const tool = createFindTool(() => services);
+
+    const text = toolText(await tool.execute("call-1", { pattern: "./src/*.ts", path: root }, undefined, undefined, fakeExtensionContext(root)));
+
+    expect(text).toContain("src/a.ts");
   });
 
   it("grep and find respect readable .gitignore files", async () => {
@@ -177,8 +340,9 @@ describe("filesystem tool contracts", () => {
         fakeExtensionContext(root),
       ),
     );
+    const findServices = await makeInitializedServices(config);
     const findText = toolText(
-      await createFindTool(() => makeServices(config)).execute(
+      await createFindTool(() => findServices).execute(
         "call-2",
         { pattern: "*.txt", path: root },
         undefined,
@@ -195,18 +359,53 @@ describe("filesystem tool contracts", () => {
     expect(findText).not.toContain("nested.txt");
   });
 
-  it("ls filters denied child entries", async () => {
+  it("ls denies disallowed roots before running sandboxed ls", async () => {
     const { root, deniedDir } = await createSearchTree();
     const config = effectiveConfig(root, {
       sandbox: { filesystem: { denyRead: [deniedDir], allowWrite: [root], denyWrite: [] } },
       enforcement: { tools: ["ls"], bypass: { mode: "deny" } },
     });
-    const tool = createLsTool(() => makeServices(config));
+    let wrapCalls = 0;
+    const services = await makeInitializedServices(config, {
+      wrapWithSandboxArgv: async () => {
+        wrapCalls++;
+        return { argv: [process.env.SHELL ?? "sh", "-lc", "printf 'should-not-run\\n'"], env: {} };
+      },
+    });
+    const tool = createLsTool(() => services);
+
+    await expect(tool.execute("call-1", { path: deniedDir }, undefined, undefined, fakeExtensionContext(root))).rejects.toThrow(
+      /read denied/,
+    );
+    expect(wrapCalls).toBe(0);
+  });
+
+  it("ls may show denied child names while protecting denied directory contents", async () => {
+    const { root, deniedDir } = await createSearchTree();
+    const config = effectiveConfig(root, {
+      sandbox: { filesystem: { denyRead: [deniedDir], allowWrite: [root], denyWrite: [] } },
+      enforcement: { tools: ["ls"], bypass: { mode: "deny" } },
+    });
+    let wrapCalls = 0;
+    let cleanupCount = 0;
+    const services = await makeInitializedServices(config, {
+      wrapWithSandboxArgv: async () => {
+        wrapCalls++;
+        return { argv: [process.env.SHELL ?? "sh", "-lc", "printf 'denied/\\npublic/\\n'"], env: {} };
+      },
+      cleanupAfterCommand: () => {
+        cleanupCount++;
+      },
+    });
+    const tool = createLsTool(() => services);
 
     const text = toolText(await tool.execute("call-1", { path: root }, undefined, undefined, fakeExtensionContext(root)));
 
-    expect(text).toContain("public");
-    expect(text).not.toContain("denied");
+    expect(wrapCalls).toBe(1);
+    expect(text).toContain("public/");
+    expect(text).toContain("denied/");
+    expect(text).not.toContain("secret.txt");
+    expect(cleanupCount).toBe(1);
   });
 });
 
