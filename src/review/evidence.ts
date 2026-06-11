@@ -37,7 +37,7 @@ function summarizeContent(content: unknown): string {
           return record.text;
         }
         if (record.type === "toolCall") {
-          return `[toolCall ${String(record.name ?? "")}]`;
+          return renderToolCall(record);
         }
         if (record.type === "image") {
           return "[image]";
@@ -48,9 +48,29 @@ function summarizeContent(content: unknown): string {
         return "";
       })
       .filter(Boolean)
-      .join(" ");
+      .join("\n");
   }
   return "";
+}
+
+function renderToolCall(record: Record<string, unknown>): string {
+  const name = typeof record.name === "string" && record.name.length > 0 ? record.name : "unknown";
+  const args = record.arguments;
+  if (args === undefined) {
+    return `[toolCall ${name}]`;
+  }
+  return `[toolCall ${name}]\n${stringifyEvidence(args)}`;
+}
+
+function stringifyEvidence(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function truncateEntry(content: string, maxLen: number): string {
@@ -67,11 +87,13 @@ function collectAllEntries(ctx: ExtensionContext): EvidenceEntry[] {
     const message = entry.message;
     const msg = message as unknown as Record<string, unknown>;
     const role = String(msg.role ?? "unknown");
+    const toolName = typeof msg.toolName === "string" ? msg.toolName : undefined;
     const content = summarizeContent(msg.content);
     if (!content) continue;
 
     const truncated = truncateEntry(content, MAX_ENTRY_CHARS);
-    const rendered = `${role}: ${truncated}`;
+    const renderedRole = role === "toolResult" && toolName ? `${role} ${toolName}` : role;
+    const rendered = `${renderedRole}: ${truncated}`;
     const tokenCost = approxTokens(rendered) + 1;
 
     result.push({
@@ -144,7 +166,7 @@ function selectAndRender(entries: EvidenceEntry[], maxTokens: number): string {
 
   for (let i = 0; i < entries.length; i++) {
     if (included.has(i)) {
-      lines.push(entries[i].rendered);
+      lines.push(`[${i + 1}] ${entries[i].rendered}`);
     }
   }
 
