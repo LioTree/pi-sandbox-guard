@@ -1,4 +1,5 @@
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
+import { mkdir } from "node:fs/promises";
 import { SandboxExecError } from "../errors";
 
 export type SandboxManagerLike = Pick<
@@ -18,6 +19,7 @@ export class SandboxSession {
   constructor(
     private readonly manager: SandboxManagerLike = SandboxManager,
     private readonly enableLogMonitor = true,
+    private readonly ensureTempWriteDirs: EnsureTempWriteDirs = ensureSandboxTempWriteDirs,
   ) {}
 
   async initialize(config: SandboxRuntimeConfig): Promise<void> {
@@ -26,6 +28,7 @@ export class SandboxSession {
       if (!this.manager.isSupportedPlatform()) {
         throw new SandboxExecError(`sandbox-runtime is not supported on ${process.platform}`);
       }
+      await this.ensureTempWriteDirs(config);
       await this.manager.initialize(config, undefined, this.enableLogMonitor);
       this.initialized = true;
     } finally {
@@ -107,6 +110,27 @@ export type PreparedSandboxCommand = {
 };
 
 type LockRelease = () => void;
+type EnsureTempWriteDirs = (config: SandboxRuntimeConfig) => Promise<void>;
+
+export async function ensureSandboxTempWriteDirs(
+  config: SandboxRuntimeConfig,
+  platform: NodeJS.Platform = process.platform,
+  mkdirFn: typeof mkdir = mkdir,
+): Promise<void> {
+  const allowWrite = new Set(config.filesystem.allowWrite);
+  const tempDirs = platform === "darwin" ? ["/tmp/claude", "/private/tmp/claude"] : ["/tmp/claude"];
+
+  for (const dir of tempDirs) {
+    if (!allowWrite.has(dir)) continue;
+    try {
+      await mkdirFn(dir, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      throw new SandboxExecError(
+        `failed to create sandbox temp write directory ${dir}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
 
 class AsyncRwLock {
   private readers = 0;

@@ -33,6 +33,12 @@ const deniedWriteTargets = [
 ];
 
 describe("Linux recommended config sandbox integration", () => {
+  it("includes only the Linux sandbox temp write directory", async () => {
+    const raw = await loadRecommendedConfig("linux");
+    expect(raw.sandbox.filesystem.allowWrite).toContain("/tmp/claude");
+    expect(raw.sandbox.filesystem.allowWrite).not.toContain("/private/tmp/claude");
+  });
+
   it("enforces read and write protection without blocking normal git data", async () => {
     if (!isLinuxSandboxSupported()) return;
 

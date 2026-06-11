@@ -8,6 +8,12 @@ import { SandboxSession } from "../../src/runtime/sandbox-session";
 import { loadRecommendedConfig, materializeRecommendedConfig, sh } from "../recommended-config-helpers";
 
 describe("macOS recommended config sandbox integration", () => {
+  it("includes both macOS sandbox temp write directory aliases", async () => {
+    const raw = await loadRecommendedConfig("macos");
+    expect(raw.sandbox.filesystem.allowWrite).toContain("/tmp/claude");
+    expect(raw.sandbox.filesystem.allowWrite).toContain("/private/tmp/claude");
+  });
+
   it("enforces recursive recommended write denies while allowing normal git data", async () => {
     if (!isMacSandboxSupported()) return;
 

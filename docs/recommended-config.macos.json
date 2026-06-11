@@ -19,7 +19,7 @@
         "~/.pi/agent/models.json"
       ],
       "allowRead": [],
-      "allowWrite": ["."],
+      "allowWrite": [".", "/tmp/claude", "/private/tmp/claude"],
       "denyWrite": [
         "**/.git/hooks",
         "**/.git/hooks/**",

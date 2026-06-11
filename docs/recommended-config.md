@@ -38,6 +38,8 @@
 
 > `**/.env` 在 Linux sandboxed `bash` 下会被展开为当前已存在的匹配路径；它不是跨整个文件系统的运行时 glob。需要保护其他工作区时，请显式添加如 `~/work/**/.env`。
 
+`sandbox-runtime` 使用 `/tmp/claude` 作为默认临时写目录；macOS 还需要 `/private/tmp/claude` 兼容路径，因此推荐配置将对应路径包含在 `allowWrite` 中。
+
 ## `sandbox-runtime` 内置 `denyWrite`
 
 当前依赖的 `@anthropic-ai/sandbox-runtime` 会在用户配置之外，强制保护一组自动加载入口。推荐配置覆盖的目标包括：
