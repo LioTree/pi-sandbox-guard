@@ -51,6 +51,7 @@ describe("renderPolicyPrompt", () => {
     expect(prompt).toContain('Denied domains:\n- "blocked.example.com"');
     expect(prompt).toContain("- review: bypassSandbox does not directly run on host");
     expect(prompt).toContain("requests reviewer approval for out-of-sandbox execution");
+    expect(prompt).toContain("Request it only when the current sandbox policy blocks a capability required for the user's task and the unsandboxed action is narrowly scoped and low risk.");
     expect(prompt).toContain("Reviewer decisions fail closed on timeout, errors, invalid output, or rejection.");
     expect(prompt).toContain("Do not use bypassSandbox to work around sandbox.filesystem policy denials.");
     expect(prompt).toContain("denyWrite");
@@ -80,6 +81,7 @@ describe("renderPolicyPrompt", () => {
     const prompt = renderPolicyPrompt(config);
 
     expect(prompt).toContain("- review: bypassSandbox does not directly run on host");
+    expect(prompt).toContain("Request it only when the current sandbox policy blocks a capability required for the user's task and the unsandboxed action is narrowly scoped and low risk.");
     expect(prompt).toContain("Reviewer is unavailable or disabled, so bypass requests fail closed.");
   });
 

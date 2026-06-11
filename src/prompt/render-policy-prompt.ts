@@ -56,7 +56,7 @@ function bypassPolicyLine(config: EffectiveConfig): string {
     const reviewerBehavior = config.reviewer?.enabled
       ? "Reviewer decisions fail closed on timeout, errors, invalid output, or rejection."
       : "Reviewer is unavailable or disabled, so bypass requests fail closed.";
-    return `- review: bypassSandbox does not directly run on host; it requests reviewer approval for out-of-sandbox execution. ${reviewerBehavior} Do not use bypassSandbox to work around sandbox.filesystem policy denials.`;
+    return `- review: bypassSandbox does not directly run on host; it requests reviewer approval for out-of-sandbox execution. Request it only when the current sandbox policy blocks a capability required for the user's task and the unsandboxed action is narrowly scoped and low risk. ${reviewerBehavior} Do not use bypassSandbox to work around sandbox.filesystem policy denials.`;
   }
 
   return "- deny: bypassSandbox is denied by configuration; do not set it. Use allowed paths, report the denial, or ask the user to change config.";
