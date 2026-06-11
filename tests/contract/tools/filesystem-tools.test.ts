@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { createEditToolDefinition, createReadToolDefinition, createWriteToolDefinition } from "@earendil-works/pi-coding-agent";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -6,12 +7,45 @@ import { createEditTool } from "../../../src/tools/adapters/edit";
 import { createFindTool } from "../../../src/tools/adapters/find";
 import { createGrepTool } from "../../../src/tools/adapters/grep";
 import { createLsTool } from "../../../src/tools/adapters/ls";
+import { createReadTool } from "../../../src/tools/adapters/read";
 import { createWriteTool } from "../../../src/tools/adapters/write";
 import { SandboxSession } from "../../../src/runtime/sandbox-session";
 import { effectiveConfig, fakeExtensionContext, fakeSandboxManager, makeServices, toolText } from "../../helpers";
 import type { EffectiveConfig } from "../../../src/config/effective";
 
 describe("filesystem tool contracts", () => {
+  it("does not mutate Pi built-in read/write/edit path schema descriptions", () => {
+    const originalReadPath = getPathDescription(createReadToolDefinition(""));
+    const originalWritePath = getPathDescription(createWriteToolDefinition(""));
+    const originalEditPath = getPathDescription(createEditToolDefinition(""));
+
+    const readTool = createReadToolDefinition("");
+    const writeTool = createWriteToolDefinition("");
+    const editTool = createEditToolDefinition("");
+
+    createReadTool(() => {
+      throw new Error("services should not be used when reading schema");
+    });
+    createWriteTool(() => {
+      throw new Error("services should not be used when reading schema");
+    });
+    const guardedEditTool = createEditTool(() => {
+      throw new Error("services should not be used when reading schema");
+    });
+
+    expect(getPathDescription(createReadToolDefinition(""))).toBe(originalReadPath);
+    expect(getPathDescription(createWriteToolDefinition(""))).toBe(originalWritePath);
+    expect(getPathDescription(createEditToolDefinition(""))).toBe(originalEditPath);
+
+    expect(getPathDescription(readTool)).toBe(originalReadPath);
+    expect(getPathDescription(writeTool)).toBe(originalWritePath);
+    expect(getPathDescription(editTool)).toBe(originalEditPath);
+    expect(guardedEditTool.description).toContain("Edits require both read and write access");
+    expect(getPathDescription(guardedEditTool)).toContain("Edits require both read and write access");
+    expect(getPathDescription(guardedEditTool)).toContain("Reads follow sandbox.filesystem path policy");
+    expect(getPathDescription(guardedEditTool)).toContain("Writes follow sandbox.filesystem path policy");
+  });
+
   it("write enters policy before touching the filesystem", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "psg-write-tool-"));
     const target = path.join(root, "denied", "out.txt");
@@ -439,6 +473,10 @@ describe("filesystem tool contracts", () => {
     expect(cleanupCount).toBe(1);
   });
 });
+
+function getPathDescription(tool: { parameters?: unknown }): string | undefined {
+  return (tool.parameters as { properties?: { path?: { description?: string } } } | undefined)?.properties?.path?.description;
+}
 
 async function makeInitializedServices(
   config: EffectiveConfig,

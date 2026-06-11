@@ -17,7 +17,7 @@ export function createGrepTool(getServices: () => Services): ToolDefinition<any,
   return {
     ...template,
     name: "grep",
-    description: `${template.description} Access is constrained by pi-sandbox-guard path policy.`,
+    description: `${template.description} Search traversal follows the same shared sandbox.filesystem read policy as read, ls, and find. denyRead removes readable/searchable content unless allowRead re-allows a matching path inside it.`,
     promptSnippet: "Search file contents through pi-sandbox-guard",
     async execute(
       _toolCallId: string,

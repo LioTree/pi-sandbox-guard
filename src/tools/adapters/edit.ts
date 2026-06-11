@@ -3,14 +3,21 @@ import path from "node:path";
 import type { Services } from "../../runtime-state";
 import { decideForTool, getToolCwd } from "../tool-context";
 import { createEditOperations } from "../guarded-operations";
+import { cloneParametersWithPathDescription } from "./schema";
 
 export function createEditTool(getServices: () => Services): ToolDefinition<any, any, any> {
   const template = createEditToolDefinition("");
+  const parameters = cloneParametersWithPathDescription(
+    template.parameters as { properties?: { path?: { description?: string } } },
+    "Path to the file to edit (relative or absolute). Edits require both read and write access. Reads follow sandbox.filesystem path policy: read is default-allow, denyRead blocks matching paths, and allowRead can re-allow matches inside denyRead. Writes follow sandbox.filesystem path policy: write is default-deny, allowWrite opens writable areas, and denyWrite excludes paths inside them.",
+  );
   return {
     ...template,
     name: "edit",
-    description: `${template.description} Access is constrained by pi-sandbox-guard path policy.`,
+    description:
+      `${template.description} Edits require both read and write access. Reads follow the shared sandbox.filesystem path policy: read is default-allow, denyRead blocks matching paths, and allowRead can re-allow matches inside denyRead. Writes follow the shared sandbox.filesystem path policy: write is default-deny, allowWrite opens writable areas, and denyWrite excludes paths inside them.`,
     promptSnippet: "Edit files through pi-sandbox-guard",
+    parameters,
     renderShell: undefined,
     renderCall: undefined,
     renderResult: undefined,

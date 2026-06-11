@@ -11,6 +11,28 @@ import { createBashTool } from "../../../src/tools/adapters/bash";
 import { fakeSandboxManager } from "../../helpers";
 
 describe("bash tool contract", () => {
+  it("exposes sandbox, placeholder, and reviewer semantics in the tool schema", () => {
+    const tool = createBashTool(() => {
+      throw new Error("services should not be used when reading schema");
+    });
+
+    expect(tool.description).toContain("sandbox");
+    expect(tool.description).toContain("denyWrite");
+    expect(tool.description).toContain("placeholder");
+    expect(tool.description).toContain("out-of-sandbox execution according to the current bypass policy");
+
+    const parameters = tool.parameters as {
+      properties?: {
+        command?: { description?: string };
+        bypassSandbox?: { description?: string };
+      };
+    };
+    expect(parameters.properties?.command?.description).toContain("sandboxed environment");
+    expect(parameters.properties?.bypassSandbox?.description).toContain("current bypass policy");
+    expect(parameters.properties?.bypassSandbox?.description).toContain("may be denied or reviewed");
+    expect(parameters.properties?.bypassSandbox?.description).toContain("work around sandbox policy denials");
+  });
+
   it("runs normal commands through sandboxed execution without reviewer", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "psg-bash-tool-"));
     const config = compileEffectiveConfig(

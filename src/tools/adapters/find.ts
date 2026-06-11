@@ -18,7 +18,7 @@ export function createFindTool(getServices: () => Services): ToolDefinition<any,
   return {
     ...template,
     name: "find",
-    description: `${template.description} Access is constrained by pi-sandbox-guard path policy.`,
+    description: `${template.description} Results come from the sandbox filesystem view under the shared read policy. denyWrite paths may appear as empty placeholder files/directories in sandboxed output; do not treat them as cleanup targets.`,
     promptSnippet: "Find files through pi-sandbox-guard",
     async execute(
       _toolCallId: string,

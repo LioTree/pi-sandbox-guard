@@ -18,7 +18,7 @@ export function createLsTool(getServices: () => Services): ToolDefinition<any, a
   return {
     ...template,
     name: "ls",
-    description: `${template.description} Access is constrained by pi-sandbox-guard path policy.`,
+    description: `${template.description} Results come from the sandbox filesystem view under the shared read policy. denyWrite paths may appear as empty placeholder files/directories in sandboxed output; do not treat them as cleanup targets.`,
     promptSnippet: "List directories through pi-sandbox-guard",
     async execute(
       _toolCallId: string,

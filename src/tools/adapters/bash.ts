@@ -8,16 +8,22 @@ import { runNativeCommand, runSandboxedCommand, sandboxCommandFromEnv } from "..
 import { decideForTool, getToolCwd, textResult } from "../tool-context";
 
 const bashSchema = Type.Object({
-  command: Type.String({ description: "Bash command to execute" }),
+  command: Type.String({ description: "Bash command to execute in the sandboxed environment by default" }),
   timeout: Type.Optional(Type.Number({ description: "Timeout in seconds" })),
-  bypassSandbox: Type.Optional(Type.Boolean({ description: "Request automatic reviewer approval to run outside sandbox" })),
+  bypassSandbox: Type.Optional(
+    Type.Boolean({
+      description:
+        "Request out-of-sandbox execution according to the current bypass policy. The request may be denied or reviewed; do not use it to work around sandbox policy denials",
+    }),
+  ),
 });
 
 export function createBashTool(getServices: () => Services): ToolDefinition {
   return {
     name: "bash",
     label: "bash",
-    description: "Execute a shell command. Commands run in sandbox by default. Set bypassSandbox: true only when an automatic security review is required.",
+    description:
+      "Execute a shell command. Commands run in the sandbox by default and see the sandboxed filesystem view. Sandboxed output may show denyWrite empty placeholder files/directories; treat them as sandbox artifacts, not cleanup targets. Set bypassSandbox: true only to request out-of-sandbox execution according to the current bypass policy; requests may be denied or reviewed. Do not use bypassSandbox to work around sandbox policy denials.",
     promptSnippet: "Run shell commands through pi-sandbox-guard",
     parameters: bashSchema,
     async execute(_toolCallId, params: { command: string; timeout?: number; bypassSandbox?: boolean }, signal, onUpdate, ctx: ExtensionContext) {

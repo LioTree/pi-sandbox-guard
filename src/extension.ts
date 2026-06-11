@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createFileAuditSink } from "./audit";
 import { loadEffectiveConfig } from "./config/load";
 import { ConfigError, SandboxExecError, type SandboxGuardError, errorMessage } from "./errors";
+import { renderPolicyPrompt } from "./prompt/render-policy-prompt";
 import { ReviewService } from "./review/service";
 import { SandboxSession } from "./runtime/sandbox-session";
 import { type PluginState, requireReady } from "./runtime-state";
@@ -84,16 +85,7 @@ export default function sandboxGuardExtension(pi: ExtensionAPI): void {
     if (state.kind !== "ready") {
       return;
     }
-    const { config } = state.services;
-    const append = [
-      "",
-      "# pi-sandbox-guard",
-      "",
-      `Controlled tools: ${config.enforcement.tools.join(", ")}.`,
-      "All file access is checked against the same sandbox.filesystem policy.",
-      "bash runs in sandbox by default. Use bypassSandbox: true only for actions that require automatic reviewer approval.",
-      `Config source: ${config.sourcePath}`,
-    ].join("\n");
+    const append = renderPolicyPrompt(state.services.config);
     return { systemPrompt: `${event.systemPrompt}\n${append}` };
   });
 }
